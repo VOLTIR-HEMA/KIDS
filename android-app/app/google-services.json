@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "211525897323",
+    "project_id": "kids-4c141",
+    "storage_bucket": "kids-4c141.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:211525897323:android:49c13766eddb6452b1752e",
+        "android_client_info": {
+          "package_name": "com.kids.monitor"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCHEiMJReJzMUlN2WcVID6QFQllCSuH8Vk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
