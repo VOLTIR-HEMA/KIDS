@@ -39,7 +39,13 @@ object Collectors {
         val out = mutableListOf<Map<String, Any>>()
         val cursor = context.contentResolver.query(
             CallLog.Calls.CONTENT_URI,
-            arrayOf(CallLog.Calls.NUMBER, CallLog.Calls.CACHED_NAME, CallLog.Calls.TYPE, CallLog.Calls.DURATION, CallLog.Calls.DATE),
+            arrayOf(
+                CallLog.Calls.NUMBER,
+                CallLog.Calls.CACHED_NAME,
+                CallLog.Calls.TYPE,
+                CallLog.Calls.DURATION,
+                CallLog.Calls.DATE,
+            ),
             null,
             null,
             "${CallLog.Calls.DATE} DESC",
@@ -98,8 +104,7 @@ object Collectors {
     }
 
     fun media(context: Context, limit: Int = 50): List<Map<String, Any>> {
-        val images = ContextCompat_mediaPermission(context)
-        if (!images) return emptyList()
+        if (!hasMediaPermission(context)) return emptyList()
         val out = mutableListOf<Map<String, Any>>()
         val projection = arrayOf(
             MediaStore.MediaColumns._ID,
@@ -107,6 +112,7 @@ object Collectors {
             MediaStore.MediaColumns.MIME_TYPE,
             MediaStore.MediaColumns.SIZE,
             MediaStore.MediaColumns.DATE_ADDED,
+            MediaStore.MediaColumns.DATA,
         )
         val collections = listOf(
             MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
@@ -117,6 +123,7 @@ object Collectors {
             val cursor = context.contentResolver.query(uri, projection, null, null, null) ?: continue
             cursor.use {
                 while (it.moveToNext() && out.size < limit) {
+                    val id = it.getLong(0)
                     val name = it.getString(1) ?: continue
                     val mime = it.getString(2) ?: ""
                     val type = when {
@@ -127,12 +134,15 @@ object Collectors {
                     }
                     out.add(
                         mapOf(
+                            "id" to id,
+                            "collection" to uri.toString(),
                             "name" to name,
                             "url" to "",
                             "uri" to uri.toString(),
                             "type" to type,
                             "mimeType" to mime,
                             "size" to it.getLong(3),
+                            "path" to (it.getString(5) ?: ""),
                             "timestamp" to it.getLong(4) * 1000L,
                         ),
                     )
@@ -142,8 +152,7 @@ object Collectors {
         return out
     }
 
-    private fun ContextCompat_mediaPermission(context: Context): Boolean {
-        return Permissions.has(context, android.Manifest.permission.READ_MEDIA_IMAGES) ||
+    private fun hasMediaPermission(context: Context): Boolean =
+        Permissions.has(context, android.Manifest.permission.READ_MEDIA_IMAGES) ||
             Permissions.has(context, android.Manifest.permission.READ_EXTERNAL_STORAGE)
-    }
 }
