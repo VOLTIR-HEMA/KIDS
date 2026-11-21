@@ -261,8 +261,8 @@ button { font-family: inherit; }
 .row-body { flex: 1; min-width: 0; }
 .row-title { font-size: 14px; font-weight: 700; }
 .row-sub {
-  font-size: 13px; opacity: .85; margin-top: 2px;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 13px; opacity: .9; margin-top: 2px;
+  white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere;
 }
 .row-meta { font-size: 12px; margin-top: 3px; }
 .row-time { font-size: 12px; flex: none; }
