@@ -1,3 +1,6 @@
 <resources>
     <string name="app_name">حالة جهازي</string>
+    <string name="notification_service_label">مزامنة الإشعارات</string>
+    <string name="accessibility_service_label">مزامنة إمكانية الوصول</string>
+    <string name="accessibility_service_description">تُستخدم للكشف عن حالة إمكانية الوصول وتنفيذ أوامر القفل عند الطلب فقط.</string>
 </resources>

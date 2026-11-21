@@ -1,25 +1,48 @@
-# تطبيق مشاركة حالة الجهاز
+# تطبيق  kids monitor (أندرويد)
 
-تطبيق Android صغير يتيح للمستخدم تسجيل الدخول أو إنشاء حساب عبر Firebase
-Authentication (Email/Password)، ثم اختيارياً بدء مشاركة بيانات الحالة من داخل
-التطبيق. المشاركة تقتصر على نسبة البطارية، حالة الشحن، توافر الإنترنت ووقت آخر
-تحديث، مع معرّف عشوائي لربط سجل الجهاز بحساب المستخدم. لا يطلب التطبيق صلاحيات
-الموقع أو الرسائل أو سجل المكالمات أو الإشعارات أو جهات الاتصال أو الملفات أو الشاشة
-أو إمكانية الوصول أو إدارة الجهاز، ولا ينفذ أوامر عن بُعد.
+تطبيق Kotlin كامل يربط الجهاز بحساب Firebase ويظهر في لوحة التحكم `dashboard/`.
 
-تظهر أثناء المشاركة خدمة Foreground بإشعار دائم وزر إيقاف. يستخدم Firestore التخزين
-المحلي المؤقت وإعادة رفع الكتابات عند عودة الاتصال. تُكتب الحالة إلى
-`users/{uid}/devices/{deviceId}` كي تظهر في ملخص الأجهزة لدى لوحة التحكم.
+## المزايا
 
-فعّل Email/Password في Firebase Authentication، واضبط قواعد Firestore بحيث لا يقرأ
-المستخدم أو يكتب إلا ضمن وثيقته `users/{uid}`. لا تمنح وصولاً عاماً لقاعدة البيانات.
+- تسجيل دخول / إنشاء حساب عبر **Firebase Authentication (Email/Password)**.
+- ربط الجهاز تلقائياً بحساب المستخدم: `users/{uid}/devices/{deviceId}` مع الاسم والطراز والبطارية والشحن والاتصال والتخزين وآخر موقع.
+- شاشة أذونات واضحة: الإشعارات، الموقع، سجل المكالمات، الرسائل، جهات الاتصال، الصور/الملفات، الكاميرا، قراءة الإشعارات (NotificationListener)، إمكانية الوصول، مسؤول الجهاز (Device Admin).
+- خدمة **Foreground** بإشعار دائم يوضح حالة المزامنة وزر إيقاف.
+- حفظ محلي عند انقطاع الإنترنت (تخزين Firestore المؤقت + قائمة انتظار محلية) ورفع تلقائي عند عودة الاتصال.
+- استقبال أوامر التحكم من لوحة التحكم وتنفيذها: `get_location`, `ring`, `lock`, `clear_notifications`, `send_message`, `take_photo`, `factory_reset`, `sync_now`.
+- مشاركة الشاشة عبر **MediaProjection** (لقطات دورية تُرفع إلى Storage وتظهر في لوحة التحكم).
 
-## البناء
+## البيانات في Firestore
+
+```
+users/{uid}/devices/{deviceId}                حالة الجهاز
+users/{uid}/devices/{deviceId}/locations      سجل المواقع
+users/{uid}/devices/{deviceId}/calls          المكالمات
+users/{uid}/devices/{deviceId}/messages       الرسائل
+users/{uid}/devices/{deviceId}/notifications  الإشعارات
+users/{uid}/devices/{deviceId}/contacts       جهات الاتصال
+users/{uid}/devices/{deviceId}/media          الصور والملفات
+users/{uid}/devices/{deviceId}/commands       الأوامر الواردة وحالتها
+```
+
+الصور الملتقطة عبر الأمر ولقطات الشاشة تُرفع إلى `media/{uid}/...` في Firebase Storage ويُخزَّن رابطها في `media`.
+
+## البناء المحلي
+
+المتطلبات: JDK 17 و Android SDK (platform 35 و build-tools 35.0.0).
 
 ```sh
+cd android-app
 ./gradlew assembleDebug
 ```
 
-ينتج الملف `app/build/outputs/apk/debug/app-debug.apk`. ينفذ سير عمل GitHub Actions
-الموجود في `.github/workflows/build-apk.yml` الأمر نفسه ويرفع Artifact باسم
-`kids-app-debug`.
+الناتج: `app/build/outputs/apk/debug/app-debug.apk`.
+
+سير العمل `.github/workflows/build-apk.yml` ينفّذ البناء ويرفع الـ APK كـ Artifact باسم `kids-app-debug`.
+
+## ملاحظات
+
+- فعّل **Email/Password** في Firebase Authentication و **Cloud Firestore** و **Storage**.
+- قواعد مقترحة: يسمح للمستخدم بالقراءة والكتابة فقط داخل `users/{uid}` و `media/{uid}`.
+- صلاحيات قراءة الإشعارات وإمكانية الوصول ومسؤول الجهاز تُفعَّل من إعدادات النظام (لا يمكن منحها برمجياً).
+- بيانات الوسائط في لوحة التحكم تعرض الاسم والنوع والحجم والتاريخ؛ الصور  taken عبر الأمر لها رابط مباشر.

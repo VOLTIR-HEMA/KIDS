@@ -4,34 +4,47 @@ import android.Manifest
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.Bundle
 import android.view.Gravity
-import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import com.google.firebase.auth.FirebaseAuth
+import com.kids.monitor.data.DeviceInfo
+import com.kids.monitor.data.FirestoreSync
 
 class MainActivity : Activity() {
+
     private lateinit var auth: FirebaseAuth
     private lateinit var root: LinearLayout
     private var emailInput: EditText? = null
     private var passwordInput: EditText? = null
     private var statusText: TextView? = null
+    private var messageText: TextView? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        FirestoreSync.init(this)
         auth = FirebaseAuth.getInstance()
         root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(32, 32, 32, 32)
+            setPadding(28, 28, 28, 28)
         }
-        setContentView(root)
+        setContentView(ScrollView(this).apply { addView(root) })
         render()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (auth.currentUser != null) updateStatus()
     }
 
     override fun onRequestPermissionsResult(
@@ -40,12 +53,29 @@ class MainActivity : Activity() {
         grantResults: IntArray,
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == NOTIFICATION_PERMISSION_REQUEST) {
+        if (requestCode == REQ_NOTIFICATIONS) {
             if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
-                startSharing()
+                MonitorService.start(this)
+                updateStatus()
             } else {
                 showMessage("يلزم السماح بالإشعارات لإظهار إشعار المزامنة المستمر.")
             }
+        }
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQ_SCREEN_SHARE && resultCode == RESULT_OK && data != null) {
+            val intent = Intent(this, ScreenShareService::class.java)
+                .putExtra(ScreenShareService.EXTRA_RESULT_CODE, resultCode)
+                .putExtra(ScreenShareService.EXTRA_RESULT_DATA, data)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(intent)
+            } else {
+                startService(intent)
+            }
+            showMessage("تم بدء مشاركة الشاشة.")
         }
     }
 
@@ -54,13 +84,13 @@ class MainActivity : Activity() {
         emailInput = null
         passwordInput = null
         statusText = null
+        messageText = null
+
         addText("مشاركة حالة الجهاز", 24f)
         addText(
-            "تتم مشاركة نسبة البطارية وحالة الشحن والاتصال، ووقت آخر تحديث، " +
-                "باستخدام معرّف عشوائي لربط الجهاز بحسابك. " +
-                "لا يقرأ التطبيق الموقع أو الرسائل أو المكالمات أو الصور أو الإشعارات، " +
-                "ولا يستقبل أوامر من لوحة التحكم. يمكنك إيقاف المشاركة أو تسجيل الخروج في أي وقت.",
-            16f,
+            "سجّل دخولك لربط هذا الجهاز بحسابك، ثم فعّل الأذونات المطلوبة من شاشة الإعدادات. " +
+                "يمكنك إيقاف المشاركة أو تسجيل الخروج في أي وقت.",
+            14f,
         )
 
         val user = auth.currentUser
@@ -81,32 +111,31 @@ class MainActivity : Activity() {
             root.addView(password, fieldParams())
             addButton("تسجيل الدخول") { authenticate(createAccount = false) }
             addButton("إنشاء حساب") { authenticate(createAccount = true) }
+            messageText = addText("", 13f)
         } else {
-            addText("تم تسجيل الدخول: ${user.email.orEmpty()}", 16f)
-            statusText = addText("", 16f)
-            updateSharingStatus()
-            addButton("بدء مشاركة الحالة") {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-                    checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
-                    PackageManager.PERMISSION_GRANTED
-                ) {
-                    requestPermissions(
-                        arrayOf(Manifest.permission.POST_NOTIFICATIONS),
-                        NOTIFICATION_PERMISSION_REQUEST,
-                    )
-                } else {
-                    startSharing()
-                }
+            addText("تم تسجيل الدخول: ${user.email.orEmpty()}", 15f)
+            addText("معرّف الجهاز: ${FirestoreSync.deviceId(this).take(8)}", 12f)
+            statusText = addText("", 14f)
+            updateStatus()
+            addButton("الأذونات والإعدادات") {
+                startActivity(Intent(this, PermissionsActivity::class.java))
             }
+            addButton("بدء مشاركة الحالة") { requestNotificationsThenStart() }
             addButton("إيقاف المشاركة") {
-                stopService(Intent(this, StatusSyncService::class.java))
-                updateSharingStatus()
+                stopService(Intent(this, MonitorService::class.java))
+                updateStatus()
+            }
+            addButton("مشاركة الشاشة") { startScreenShare() }
+            addButton("مزامنة الآن") {
+                MonitorService.syncNow(this)
+                showMessage("تم طلب مزامنة فورية.")
             }
             addButton("تسجيل الخروج") {
-                stopService(Intent(this, StatusSyncService::class.java))
+                stopService(Intent(this, MonitorService::class.java))
                 auth.signOut()
                 render()
             }
+            messageText = addText("", 13f)
         }
     }
 
@@ -131,34 +160,41 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun startSharing() {
-        val intent = Intent(this, StatusSyncService::class.java)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(intent)
+    private fun requestNotificationsThenStart() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            ActivityCompat.requestPermissions(
+                this,
+                arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+                REQ_NOTIFICATIONS,
+            )
         } else {
-            startService(intent)
+            MonitorService.start(this)
+            updateStatus()
         }
-        statusText?.text = "جارٍ بدء خدمة المزامنة..."
-        root.postDelayed({ updateSharingStatus() }, 500)
     }
 
-    private fun updateSharingStatus() {
-        val enabled = getSharedPreferences(StatusSyncService.PREFERENCES, MODE_PRIVATE)
-            .getBoolean(StatusSyncService.SHARING_ENABLED, false)
+    private fun startScreenShare() {
+        val manager = getSystemService(MediaProjectionManager::class.java) ?: return
+        startActivityForResult(manager.createScreenCaptureIntent(), REQ_SCREEN_SHARE)
+    }
+
+    private fun updateStatus() {
+        val enabled = getSharedPreferences(MonitorService.PREFERENCES, MODE_PRIVATE)
+            .getBoolean(MonitorService.SHARING_ENABLED, false)
+        val online = DeviceInfo.online(this)
         statusText?.text = if (enabled) {
-            "مشاركة الحالة مفعّلة، والخدمة تعمل بإشعار ظاهر."
+            "المزامنة تعمل · البطارية ${DeviceInfo.battery(this)}٪ · " +
+                if (online) "متصل بالإنترنت" else "غير متصل"
         } else {
             "مشاركة الحالة متوقفة."
         }
     }
 
     private fun showMessage(message: String) {
-        val messageView = TextView(this).apply {
-            text = message
-            textSize = 14f
-            setPadding(0, 12, 0, 12)
-        }
-        root.addView(messageView, fieldParams())
+        messageText?.text = message
     }
 
     private fun addText(text: String, size: Float): TextView =
@@ -166,7 +202,7 @@ class MainActivity : Activity() {
             this.text = text
             textSize = size
             gravity = Gravity.CENTER
-            setPadding(0, 12, 0, 12)
+            setPadding(0, 10, 0, 10)
             root.addView(this, fieldParams())
         }
 
@@ -182,11 +218,10 @@ class MainActivity : Activity() {
         LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT,
-        ).apply {
-            bottomMargin = 8
-        }
+        ).apply { bottomMargin = 8 }
 
     companion object {
-        private const val NOTIFICATION_PERMISSION_REQUEST = 41
+        private const val REQ_NOTIFICATIONS = 41
+        private const val REQ_SCREEN_SHARE = 42
     }
 }
