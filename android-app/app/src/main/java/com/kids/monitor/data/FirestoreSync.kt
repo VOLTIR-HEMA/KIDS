@@ -29,7 +29,7 @@ object FirestoreSync {
         val settings = FirebaseFirestoreSettings.Builder()
             .setPersistenceEnabled(true)
             .build()
-        db().setFirebaseFirestoreSettings(settings)
+        db().firestoreSettings = settings
     }
 
     fun db(): FirebaseFirestore = FirebaseFirestore.getInstance()

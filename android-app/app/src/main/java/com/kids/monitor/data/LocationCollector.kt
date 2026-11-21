@@ -20,7 +20,7 @@ object LocationCollector {
             ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) ==
             PackageManager.PERMISSION_GRANTED
 
-    fun lastLocation(context: Context): Map<String, Any>? {
+    private fun bestLastKnownLocation(context: Context): Location? {
         if (!hasPermission(context)) return null
         val lm = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return null
         var best: Location? = null
@@ -39,8 +39,11 @@ object LocationCollector {
                 // تجاهل: مزوّد غير متاح
             }
         }
-        return best?.toMap()
+        return best
     }
+
+    fun lastLocation(context: Context): Map<String, Any>? =
+        bestLastKnownLocation(context)?.toMap()
 
     /** محاولة الحصول على موقع حديث لمدة قصيرة، ثم الرجوع لآخر موقع معروف. */
     fun freshLocation(context: Context, timeoutMs: Long = 8000): Map<String, Any>? {
@@ -87,7 +90,8 @@ object LocationCollector {
         } catch (e: Exception) {
             // تجاهل
         }
-        return (result ?: lastLocation(context))?.toMap()
+        val finalLoc: Location? = result ?: bestLastKnownLocation(context)
+        return finalLoc?.toMap()
     }
 
     private fun Location.toMap(): Map<String, Any> = mapOf(
