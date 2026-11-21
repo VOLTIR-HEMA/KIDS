@@ -39,7 +39,7 @@ object Collectors {
         val out = mutableListOf<Map<String, Any>>()
         val cursor = context.contentResolver.query(
             CallLog.Calls.CONTENT_URI,
-            arrayOf(CallLog.Calls.NUMBER, CallLog.Calls.NAME, CallLog.Calls.TYPE, CallLog.Calls.DURATION, CallLog.Calls.DATE),
+            arrayOf(CallLog.Calls.NUMBER, CallLog.Calls.CACHED_NAME, CallLog.Calls.TYPE, CallLog.Calls.DURATION, CallLog.Calls.DATE),
             null,
             null,
             "${CallLog.Calls.DATE} DESC",
