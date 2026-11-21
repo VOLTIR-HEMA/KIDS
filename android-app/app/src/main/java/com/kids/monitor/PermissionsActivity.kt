@@ -85,7 +85,7 @@ class PermissionsActivity : Activity() {
         root.addView(
             Button(this).apply {
                 text = "مزامنة الآن"
-                setOnClickListener { MonitorService.syncNow(this@PermissionsActivity) },
+                setOnClickListener { MonitorService.syncNow(this@PermissionsActivity) }
             },
         )
 
