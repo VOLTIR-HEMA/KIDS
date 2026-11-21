@@ -104,8 +104,7 @@ object Collectors {
     }
 
     fun media(context: Context, limit: Int = 50): List> {
-        val images = ContextCompat_mediaPermission(context)
-        if (!images) return emptyList()
+        if (!ContextCompat_mediaPermission(context)) return emptyList()
         val out = mutableListOf>()
         val projection = arrayOf(
             MediaStore.MediaColumns._ID,
