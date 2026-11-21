@@ -11,9 +11,11 @@ object Permissions {
     fun has(context: Context, permission: String): Boolean =
         ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
 
-    /** الأذونات التي تُطلب دفعة واحدة حسب إصدار النظام. */
+    /** كل الأذونات العادية التي تُطلب دفعة واحدة عند الحاجة. */
     fun runtimePermissions(): List<String> {
         val list = mutableListOf(
+            Manifest.permission.RECORD_AUDIO,
+            Manifest.permission.READ_PHONE_STATE,
             Manifest.permission.ACCESS_FINE_LOCATION,
             Manifest.permission.ACCESS_COARSE_LOCATION,
             Manifest.permission.READ_CALL_LOG,
