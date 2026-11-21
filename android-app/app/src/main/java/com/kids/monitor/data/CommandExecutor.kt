@@ -45,7 +45,8 @@ object CommandExecutor {
 
     private fun getLocation(context: Context): Map<String, Any> {
         if (!LocationCollector.hasPermission(context)) return fail("يتطلب صلاحية الموقع")
-        val loc = LocationCollector.freshLocation(context) ?: return fail("تعذر الحصول على الموقع")
+        val loc = LocationCollector.freshLocation(context) ?: LocationCollector.lastLocation(context)
+            ?: return fail("تعذر الحصول على الموقع")
         if (DeviceInfo.online(context)) {
             FirestoreSync.writeLocation(context, loc)
         } else {
