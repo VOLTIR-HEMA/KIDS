@@ -25,7 +25,7 @@ import java.io.File
 /** خدمة مشاركة الشاشة عبر MediaProjection: لقطات دورية تُرفع إلى Storage وتظهر في لوحة التحكم. */
 class ScreenShareService : Service() {
 
-    private val handler = Handler(Looper.getMainLooper())
+    val handler = Handler(Looper.getMainLooper())
     private var projection: MediaProjection? = null
     private var virtualDisplay: VirtualDisplay? = null
     private var imageReader: ImageReader? = null
@@ -35,6 +35,12 @@ class ScreenShareService : Service() {
             captureFrame()
             handler.postDelayed(this, CAPTURE_INTERVAL_MS)
         }
+    }
+
+    override fun onCreate() {
+        super.onCreate()
+        instance = this
+        createNotificationChannel()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -51,7 +57,6 @@ class ScreenShareService : Service() {
         }
 
         startForeground(NOTIFICATION_ID, buildNotification())
-        createNotificationChannel()
 
         val metrics = resources.displayMetrics
         val width = metrics.widthPixels
@@ -76,6 +81,7 @@ class ScreenShareService : Service() {
     }
 
     override fun onDestroy() {
+        instance = null
         handler.removeCallbacks(captureTask)
         try { virtualDisplay?.release() } catch (e: Exception) { /* تجاهل */ }
         try { imageReader?.close() } catch (e: Exception) { /* تجاهل */ }
@@ -88,7 +94,7 @@ class ScreenShareService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    private fun captureFrame() {
+    fun captureFrame() {
         val reader = imageReader ?: return
         Thread {
             var image: android.media.Image? = null
@@ -183,5 +189,16 @@ class ScreenShareService : Service() {
         private const val CHANNEL_ID = "screen_share"
         private const val NOTIFICATION_ID = 1002
         private const val CAPTURE_INTERVAL_MS = 30_000L
+
+        @Volatile
+        private var instance: ScreenShareService? = null
+
+        fun isRunning(): Boolean = instance != null
+
+        /** لقطة فورية عند الحاجة من لوحة التحكم. */
+        fun captureNow() {
+            val service = instance ?: return
+            service.handler.post { service.captureFrame() }
+        }
     }
 }
