@@ -128,14 +128,24 @@ function renderMedia(body, ctx) {
 
     for (const m of images) {
       const url = m.url || m.downloadUrl || "";
-      const card = h("button", { class: "media-item", type: "button" }, [
-        url
-          ? h("img", { class: "media-thumb", src: url, alt: m.name || "صورة", loading: "lazy" })
-          : h("div", { class: "media-thumb placeholder", text: "🖼️" }),
+      const card = h("div", { class: "media-item" }, [
+        h("div", { class: "media-thumb placeholder", text: "🖼️" }),
         h("div", { class: "media-name", text: m.name || "صورة" }),
         h("div", { class: "media-meta muted", text: fmtDateTime(m.timestamp) }),
+        url
+          ? h("button", { class: "btn ghost sm media-open", type: "button", text: "عرض" })
+          : h("div", { class: "media-meta muted", text: "لا يوجد رابط" }),
       ]);
-      if (url) card.addEventListener("click", () => window.open(url, "_blank"));
+      if (url) {
+        const openBtn = card.querySelector(".media-open");
+        openBtn.addEventListener("click", () => {
+          const img = h("img", { class: "media-thumb", src: url, alt: m.name || "صورة", loading: "lazy", decoding: "async" });
+          img.addEventListener("click", () => window.open(url, "_blank"));
+          card.replaceChild(img, card.querySelector(".media-thumb"));
+          openBtn.remove();
+          card.append(h("a", { class: "media-meta", href: url, target: "_blank", rel: "noopener", text: "فتح / تنزيل ⬇" }));
+        });
+      }
       grid.append(card);
     }
 
