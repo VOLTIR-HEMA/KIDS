@@ -2,6 +2,7 @@ import { h, fmtDateTime, fmtBytes, emptyState, errorBox } from "../util.js";
 
 const COMMANDS = [
   { type: "get_location", icon: "📍", title: "تحديث الموقع", desc: "إرسال طلب لتحديث موقع الجهاز فوراً" },
+  { type: "take_screenshot", icon: "🖥️", title: "لقطة شاشة", desc: "التقاط لقطة شاشة فورية (يتطلب تفعيل مشاركة الشاشة)" },
   { type: "ring", icon: "🔔", title: "رنين الجهاز", desc: "تشغيل رنين الجهاز بحد أقصى للصوت" },
   { type: "take_photo", icon: "📷", title: "التقاط صورة", desc: "التقاط صورة من الكاميرا وإرسالها" },
   { type: "lock", icon: "🔒", title: "قفل الجهاز", desc: "قفل شاشة الجهاز عن بُعد" },
@@ -42,6 +43,10 @@ function classify(m) {
   return "file";
 }
 
+function isAudio(m) {
+  return String(m.mimeType || m.type || "").toLowerCase().startsWith("audio");
+}
+
 export function render(container, ctx) {
   container.innerHTML = "";
   const root = h("div", { class: "media-section" });
@@ -79,13 +84,14 @@ export function render(container, ctx) {
 function renderMedia(body, ctx) {
   const toolbar = h("div", { class: "filter-row" });
   const select = h("select", { class: "input select sm" });
-  for (const o of [["all", "الكل"], ["image", "الصور"], ["file", "الملفات"]]) {
+  for (const o of [["all", "الكل"], ["image", "الصور"], ["audio", "التسجيلات"], ["file", "الملفات"]]) {
     select.append(h("option", { value: o[0], text: o[1] }));
   }
-  toolbar.append(h("span", { class: "panel-title", text: "الصور والملفات" }), select);
+  toolbar.append(h("span", { class: "panel-title", text: "الصور والتسجيلات والملفات" }), select);
   const grid = h("div", { class: "media-grid" });
+  const audioList = h("div", { class: "list" });
   const filesList = h("div", { class: "list" });
-  body.append(toolbar, grid, filesList);
+  body.append(toolbar, grid, audioList, filesList);
 
   let media = [];
   let filter = "all";
@@ -104,15 +110,18 @@ function renderMedia(body, ctx) {
 
   function draw() {
     grid.innerHTML = "";
+    audioList.innerHTML = "";
     filesList.innerHTML = "";
-    const images = media.filter((m) => classify(m) === "image" && filter !== "file");
-    const files = media.filter((m) => classify(m) === "file" && filter !== "image");
+
+    const images = media.filter((m) => classify(m) === "image" && filter !== "audio" && filter !== "file");
+    const audioItems = media.filter((m) => isAudio(m) && filter !== "image" && filter !== "file");
+    const files = media.filter((m) => classify(m) === "file" && !isAudio(m) && filter !== "image" && filter !== "audio");
 
     if (!media.length) {
-      grid.append(emptyState("🖼️", "لا توجد وسائط", "ستظهر الصور والملفات هنا عند توفرها"));
+      grid.append(emptyState("🖼️", "لا توجد وسائط", "ستظهر الصور والتسجيلات والملفات هنا عند توفرها"));
       return;
     }
-    if (!images.length && !files.length) {
+    if (!images.length && !audioItems.length && !files.length) {
       grid.append(emptyState("🔍", "لا توجد عناصر مطابقة للتصفية"));
       return;
     }
@@ -128,6 +137,21 @@ function renderMedia(body, ctx) {
       ]);
       if (url) card.addEventListener("click", () => window.open(url, "_blank"));
       grid.append(card);
+    }
+
+    for (const m of audioItems) {
+      const url = m.url || "";
+      const card = h("div", { class: "list-row audio-card" }, [
+        h("div", { class: "row-icon", text: "🎙️" }),
+        h("div", { class: "row-body" }, [
+          h("div", { class: "row-title", text: m.name || "تسجيل صوتي" }),
+          h("div", { class: "row-meta muted", text: [fmtBytes(m.size), fmtDateTime(m.timestamp)].filter(Boolean).join(" · ") }),
+          url
+            ? h("audio", { class: "audio-player", controls: true, preload: "none", src: url, style: "width:100%;margin-top:8px" })
+            : h("div", { class: "row-meta muted", text: "لا يوجد رابط تشغيل (لم يُرفع بعد)" }),
+        ]),
+      ]);
+      audioList.append(card);
     }
 
     for (const m of files) {
