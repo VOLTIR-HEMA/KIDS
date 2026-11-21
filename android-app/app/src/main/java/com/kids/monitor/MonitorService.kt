@@ -404,7 +404,7 @@ class MonitorService : Service() {
             .setContentIntent(openApp)
             .setPriority(Notification.PRIORITY_MIN)
             .setShowWhen(false)
-            .setSilent(true)
+            .setSound(null)
             .setVisibility(Notification.VISIBILITY_SECRET)
             .setOngoing(true)
             .build()
