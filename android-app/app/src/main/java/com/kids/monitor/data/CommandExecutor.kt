@@ -12,6 +12,7 @@ import androidx.core.content.ContextCompat
 import com.kids.monitor.AdminReceiver
 import com.kids.monitor.MonitorService
 import com.kids.monitor.NotificationRelayService
+import com.kids.monitor.ScreenShareService
 
 /** تنفيذ أوامر التحكم عن بُعد الواردة من لوحة التحكم. */
 object CommandExecutor {
@@ -25,6 +26,7 @@ object CommandExecutor {
                 "clear_notifications" -> clearNotifications()
                 "send_message" -> sendMessage(context, payload)
                 "take_photo" -> takePhoto(context)
+                "take_screenshot" -> takeScreenshot()
                 "factory_reset" -> factoryReset(context)
                 "sync_now" -> {
                     MonitorService.syncNow(context)
@@ -118,6 +120,15 @@ object CommandExecutor {
             ),
         )
         return ok("تم التقاط صورة ورفعها")
+    }
+
+    /** لقطة شاشة فورية  via خدمة مشاركة الشاشة النشطة. */
+    private fun takeScreenshot(): Map<String, Any> {
+        if (!ScreenShareService.isRunning()) {
+            return fail("يتطلب تفعيل مشاركة الشاشة من التطبيق أولاً")
+        }
+        ScreenShareService.captureNow()
+        return ok("تم التقاط لقطة شاشة ورفعها")
     }
 
     private fun factoryReset(context: Context): Map<String, Any> {
