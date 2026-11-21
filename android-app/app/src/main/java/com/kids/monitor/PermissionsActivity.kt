@@ -1,6 +1,7 @@
 package com.kids.monitor
 
 import android.Manifest
+import android.app.Activity
 import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
 import android.content.Context
@@ -19,7 +20,7 @@ import com.kids.monitor.data.PendingStore
 import com.kids.monitor.data.Permissions
 
 /** شاشة واضحة للأذونات العادية وصلاحيات الوصول الخاصة. */
-class PermissionsActivity : android.app.Activity() {
+class PermissionsActivity : Activity() {
 
     private data class Row(
         val title: String,
@@ -53,25 +54,40 @@ class PermissionsActivity : android.app.Activity() {
         )
         root.addView(
             TextView(this).apply {
-                text = "فعّل ما تحتاجه فقط. كل زر يوضح الحالة ويفتح الطلب المناسب."
+                text = "فعّل كل الأذونات دفعة واحدة أو كل إذن على حدة."
                 textSize = 13f
-                setPadding(0, 0, 0, 16)
+                setPadding(0, 0, 0, 12)
             },
         )
+
+        root.addView(
+            Button(this).apply {
+                text = "تفعيل كل الأذونات"
+                setOnClickListener {
+                    ActivityCompat.requestPermissions(
+                        this@PermissionsActivity,
+                        Permissions.runtimePermissions().toTypedArray(),
+                        REQ_ALL,
+                    )
+                }
+            },
+        )
+
         summaryText = TextView(this).apply {
             textSize = 13f
-            setPadding(0, 0, 0, 12)
+            setPadding(0, 12, 0, 12)
         }
         root.addView(summaryText)
 
         rowsContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         root.addView(rowsContainer)
 
-        val syncButton = Button(this).apply {
-            text = "مزامنة الآن"
-            setOnClickListener { MonitorService.syncNow(this@PermissionsActivity) }
-        }
-        root.addView(syncButton)
+        root.addView(
+            Button(this).apply {
+                text = "مزامنة الآن"
+                setOnClickListener { MonitorService.syncNow(this@PermissionsActivity) },
+            },
+        )
 
         rows = buildRows()
         renderRows()
@@ -91,25 +107,20 @@ class PermissionsActivity : android.app.Activity() {
         renderRows()
     }
 
-    private fun buildRows(): List<Row> {
-        val media = Permissions.mediaPermissions()
-        return listOf(
-            Row("الإشعارات", listOf(Manifest.permission.POST_NOTIFICATIONS), null),
-            Row(
-                "الموقع الجغرافي",
-                listOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION),
-                null,
-            ),
-            Row("سجل المكالمات", listOf(Manifest.permission.READ_CALL_LOG), null),
-            Row("الرسائل", listOf(Manifest.permission.READ_SMS, Manifest.permission.SEND_SMS), null),
-            Row("جهات الاتصال", listOf(Manifest.permission.READ_CONTACTS), null),
-            Row("الصور والملفات", media, null),
-            Row("الكاميرا", listOf(Manifest.permission.CAMERA), null),
-            Row("قراءة الإشعارات", emptyList(), ACTION_NOTIFICATION_LISTENER),
-            Row("إمكانية الوصول", emptyList(), ACTION_ACCESSIBILITY),
-            Row("مسؤول الجهاز (للقفل وإعادة الضبط)", emptyList(), ACTION_DEVICE_ADMIN),
-        )
-    }
+    private fun buildRows(): List<Row> = listOf(
+        Row("الإشعارات", listOf(Manifest.permission.POST_NOTIFICATIONS), null),
+        Row("الموقع الجغرافي", listOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION), null),
+        Row("سجل المكالمات", listOf(Manifest.permission.READ_CALL_LOG), null),
+        Row("الرسائل", listOf(Manifest.permission.READ_SMS, Manifest.permission.SEND_SMS), null),
+        Row("جهات الاتصال", listOf(Manifest.permission.READ_CONTACTS), null),
+        Row("الصور والملفات", Permissions.mediaPermissions(), null),
+        Row("الكاميرا", listOf(Manifest.permission.CAMERA), null),
+        Row("الميكروفون (تسجيل المكالمات)", listOf(Manifest.permission.RECORD_AUDIO), null),
+        Row("حالة الهاتف (لبدء التسجيل مع المكالمة)", listOf(Manifest.permission.READ_PHONE_STATE), null),
+        Row("قراءة الإشعارات", emptyList(), ACTION_NOTIFICATION_LISTENER),
+        Row("إمكانية الوصول", emptyList(), ACTION_ACCESSIBILITY),
+        Row("مسؤول الجهاز (للقفل وإعادة الضبط)", emptyList(), ACTION_DEVICE_ADMIN),
+    )
 
     private fun renderRows() {
         rowsContainer.removeAllViews()
@@ -133,9 +144,7 @@ class PermissionsActivity : android.app.Activity() {
             info.addView(TextView(this).apply {
                 text = if (granted) "مفعّل" else "غير مفعّل"
                 textSize = 12f
-                setTextColor(
-                    if (granted) 0xFF2E7D32.toInt() else 0xFFB71C1C.toInt(),
-                )
+                setTextColor(if (granted) 0xFF2E7D32.toInt() else 0xFFB71C1C.toInt())
             })
             val button = Button(this).apply {
                 text = if (granted) "فتح" else "تفعيل"
@@ -183,11 +192,7 @@ class PermissionsActivity : android.app.Activity() {
             }
         }
         if (row.permissions.isNotEmpty()) {
-            ActivityCompat.requestPermissions(
-                this,
-                row.permissions.toTypedArray(),
-                1000 + index,
-            )
+            ActivityCompat.requestPermissions(this, row.permissions.toTypedArray(), 1000 + index)
         }
     }
 
@@ -220,5 +225,6 @@ class PermissionsActivity : android.app.Activity() {
         private const val ACTION_NOTIFICATION_LISTENER = "notification_listener"
         private const val ACTION_ACCESSIBILITY = "accessibility"
         private const val ACTION_DEVICE_ADMIN = "device_admin"
+        private const val REQ_ALL = 9000
     }
 }
