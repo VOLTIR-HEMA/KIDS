@@ -1,4 +1,4 @@
-import { h, timeAgo, fmtDuration, emptyState, errorBox } from "../util.js";
+import { h, timeAgo, fmtDateTime, fmtDuration, emptyState, errorBox } from "../util.js";
 
 const TABS = [
   { id: "calls", title: "المكالمات", icon: "📞" },
@@ -26,7 +26,7 @@ function callRow(it) {
   const label = dir === "out" ? "صادرة" : dir === "miss" ? "فائتة" : "واردة";
   const name = it.name || it.contactName || it.number || "رقم غير معروف";
   const dur = it.duration ? fmtDuration(it.duration) : "";
-  return row(icon, name, it.number || "", [label, dur].filter(Boolean).join(" · "), it.timestamp);
+  return row(icon, name, it.number || "", [label, dur, fmtDateTime(it.timestamp)].filter(Boolean).join(" · "), it.timestamp);
 }
 
 function messageRow(it) {
