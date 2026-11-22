@@ -100,7 +100,7 @@ class CameraService : Service() {
             Notification.Builder(this)
         }
         return builder
-            .setSmallIcon(android.R.drawable.stat_sys_camera)
+            .setSmallIcon(android.R.drawable.ic_menu_camera)
             .setContentTitle("المزامنة")
             .setContentText("الكاميرا تعمل")
             .setContentIntent(openApp)
