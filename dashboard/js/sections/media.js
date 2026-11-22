@@ -127,7 +127,7 @@ function renderMedia(body, ctx) {
     }
 
     for (const m of images) {
-      const url = m.url || m.downloadUrl || "";
+      const url = m.url || m.downloadUrl || m.dataUrl || "";
       const card = h("div", { class: "media-item" }, [
         h("div", { class: "media-thumb placeholder", text: "🖼️" }),
         h("div", { class: "media-name", text: m.name || "صورة" }),
@@ -150,7 +150,7 @@ function renderMedia(body, ctx) {
     }
 
     for (const m of audioItems) {
-      const url = m.url || "";
+      const url = m.url || m.dataUrl || "";
       const card = h("div", { class: "list-row audio-card" }, [
         h("div", { class: "row-icon", text: "🎙️" }),
         h("div", { class: "row-body" }, [
@@ -165,7 +165,7 @@ function renderMedia(body, ctx) {
     }
 
     for (const m of files) {
-      const url = m.url || m.downloadUrl || "";
+      const url = m.url || m.downloadUrl || m.dataUrl || "";
       const inner = [
         h("div", { class: "row-icon", text: iconForFile(m) }),
         h("div", { class: "row-body" }, [
