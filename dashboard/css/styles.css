@@ -366,6 +366,12 @@ button { font-family: inherit; }
 ::-webkit-scrollbar-thumb { background: #2c3a68; border-radius: 99px; border: 2px solid var(--bg); }
 ::-webkit-scrollbar-track { background: transparent; }
 
+/* مباشر */
+.live-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin-bottom: 12px; }
+.live-card { display: block; }
+.live-check { display: flex; align-items: center; gap: 10px; cursor: pointer; }
+.live-check input { accent-color: var(--accent); width: 18px; height: 18px; }
+
 /* التجاوب */
 @media (max-width: 1100px) {
   .loc-layout { grid-template-columns: 1fr; }
