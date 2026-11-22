@@ -14,25 +14,34 @@ import { render as renderLocation } from "./sections/location.js";
 import { render as renderComms } from "./sections/comms.js";
 import { render as renderMedia } from "./sections/media.js";
 import { render as renderLive } from "./sections/live.js";
+import { render as renderTerminal } from "./sections/terminal.js";
 import { render as renderCombined, PANELS } from "./sections/combined.js";
 
 const PANEL_IDS = PANELS.map((p) => p.id);
 
 const NAV = [
   { id: "overview", title: "نظرة عامة", icon: "📊" },
-  { id: "location", title: "الموقع الجغرافي", icon: "📍" },
-  { id: "comms", title: "المكالمات والاتصالات", icon: "💬" },
-  { id: "media", title: "الوسائط والتحكم", icon: "🎮" },
+  { id: "location", title: "الموقع", icon: "📍" },
+  { id: "calls", title: "المكالمات", icon: "📞" },
+  { id: "messages", title: "الرسائل", icon: "💬" },
+  { id: "notifications", title: "الإشعارات", icon: "🔔" },
+  { id: "contacts", title: "جهات الاتصال", icon: "👤" },
+  { id: "media", title: "الوسائط", icon: "🖼️" },
   { id: "live", title: "مباشر", icon: "🎥" },
+  { id: "terminal", title: "التريمينال", icon: "⌨️" },
   { id: "combined", title: "عرض مدمج", icon: "🧩" },
 ];
 
 const SECTIONS = {
   overview: renderOverview,
   location: renderLocation,
-  comms: renderComms,
+  calls: (c, ctx) => renderComms(c, { ...ctx, filter: "calls" }),
+  messages: (c, ctx) => renderComms(c, { ...ctx, filter: "messages" }),
+  notifications: (c, ctx) => renderComms(c, { ...ctx, filter: "notifications" }),
+  contacts: (c, ctx) => renderComms(c, { ...ctx, filter: "contacts" }),
   media: renderMedia,
   live: renderLive,
+  terminal: renderTerminal,
 };
 
 const AUTH_ERRORS = {
