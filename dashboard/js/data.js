@@ -1,7 +1,7 @@
 // طبقة البيانات: مزوّد Firestore حقيقي + مزوّد تجريبي لاستعراض الواجهة بدون بيانات
 import {
   collection, doc, getDoc, getDocs, onSnapshot,
-  addDoc, serverTimestamp, where, query,
+  addDoc, deleteDoc, limit, serverTimestamp, where, query,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { db } from "./firebase.js";
 import { toDate } from "./util.js";
@@ -175,6 +175,21 @@ export function watchCommand(uid, deviceId, commandId, cb) {
   );
 }
 
+/** حذف جهاز قديم/مكرر مع بياناته (على دفعات محدودة لتوفير الحصة). */
+export async function deleteDevice(uid, deviceId) {
+  const subs = ["locations", "calls", "messages", "notifications", "contacts", "media", "commands", "live"];
+  for (const name of subs) {
+    try {
+      const snap = await getDocs(query(
+        collection(db, "users", uid, "devices", deviceId, name),
+        limit(300),
+      ));
+      await Promise.all(snap.docs.map((d) => deleteDoc(d.ref).catch(() => {})));
+    } catch { /* تجاهل */ }
+  }
+  try { await deleteDoc(doc(db, "users", uid, "devices", deviceId)); } catch { /* تجاهل */ }
+}
+
 export function createFirestoreProvider() {
   return {
     mode: "firebase",
@@ -184,6 +199,7 @@ export function createFirestoreProvider() {
     subscribeLive,
     watchCommand,
     sendCommand,
+    deleteDevice,
   };
 }
 
@@ -375,6 +391,12 @@ export function createDemoProvider() {
         }
       }, 800);
       return () => clearInterval(timer);
+    },
+
+    async deleteDevice(uid, deviceId) {
+      const i = devices.findIndex((d) => d.id === deviceId);
+      if (i >= 0) devices.splice(i, 1);
+      return true;
     },
   };
 }
