@@ -6,12 +6,13 @@ import android.content.pm.PackageManager
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
+import android.os.Build
 import android.os.Looper
 import androidx.core.content.ContextCompat
-import com.google.firebase.firestore.FieldValue
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
+/** جمع الموقع عبر LocationManager فقط (بدون Play Services) لضمان العمل على كل الأجهزة. */
 object LocationCollector {
 
     fun hasPermission(context: Context): Boolean =
@@ -20,35 +21,48 @@ object LocationCollector {
             ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) ==
             PackageManager.PERMISSION_GRANTED
 
-    private fun bestLastKnownLocation(context: Context): Location? {
+    fun hasBackgroundPermission(context: Context): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.Q ||
+            ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_BACKGROUND_LOCATION) ==
+            PackageManager.PERMISSION_GRANTED
+
+    private fun manager(context: Context): LocationManager? =
+        context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+
+    private fun enabledProviders(lm: LocationManager): List<String> {
+        val list = mutableListOf<String>()
+        for (provider in listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)) {
+            try {
+                if (lm.isProviderEnabled(provider)) list.add(provider)
+            } catch (e: Exception) { /* تجاهل */ }
+        }
+        if (list.isEmpty()) {
+            try { if (lm.isProviderEnabled(LocationManager.PASSIVE_PROVIDER)) list.add(LocationManager.PASSIVE_PROVIDER) } catch (e: Exception) { /* تجاهل */ }
+        }
+        return list
+    }
+
+    fun lastLocation(context: Context): Map<String, Any>? {
         if (!hasPermission(context)) return null
-        val lm = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return null
+        val lm = manager(context) ?: return null
         var best: Location? = null
-        val providers = listOf(
-            LocationManager.GPS_PROVIDER,
-            LocationManager.NETWORK_PROVIDER,
-            LocationManager.PASSIVE_PROVIDER,
-        )
-        for (provider in providers) {
+        for (provider in listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER, LocationManager.PASSIVE_PROVIDER)) {
             try {
                 val loc = lm.getLastKnownLocation(provider) ?: continue
                 if (best == null || loc.time > best!!.time) best = loc
             } catch (e: SecurityException) {
-                // تجاهل: الصلاحية قد تكون ملغاة
-            } catch (e: IllegalArgumentException) {
-                // تجاهل: مزوّد غير متاح
+                /* الصلاحية ملغاة */
+            } catch (e: Exception) {
+                /* مزوّد غير متاح */
             }
         }
-        return best
+        return best?.toMap()
     }
 
-    fun lastLocation(context: Context): Map<String, Any>? =
-        bestLastKnownLocation(context)?.toMap()
-
     /** محاولة الحصول على موقع حديث لمدة قصيرة، ثم الرجوع لآخر موقع معروف. */
-    fun freshLocation(context: Context, timeoutMs: Long = 8000): Map<String, Any>? {
+    fun freshLocation(context: Context, timeoutMs: Long = 12000): Map<String, Any>? {
         if (!hasPermission(context)) return null
-        val lm = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return null
+        val lm = manager(context) ?: return null
         val latch = CountDownLatch(1)
         var result: Location? = null
         val listener = object : LocationListener {
@@ -58,47 +72,78 @@ object LocationCollector {
             }
 
             override fun onProviderEnabled(provider: String) {}
+            override fun onProviderDisabled(provider: String) {}
+        }
+        var registered = 0
+        for (provider in enabledProviders(lm)) {
+            try {
+                lm.requestLocationUpdates(provider, 0L, 0f, listener, Looper.getMainLooper())
+                registered++
+            } catch (e: Exception) { /* تجاهل */ }
+        }
+        if (registered == 0) {
+            // محاولة مباشرة على GPS حتى لو ظهر معطّلاً (بعض الأجهزة تبلّغ خطأ)
+            try {
+                lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 0L, 0f, listener, Looper.getMainLooper())
+                registered++
+            } catch (e: Exception) { /* تجاهل */ }
+        }
+        if (registered > 0) latch.await(timeoutMs, TimeUnit.MILLISECONDS)
+        try { lm.removeUpdates(listener) } catch (e: Exception) { /* تجاهل */ }
+        return (result ?: lastLocationLocation(lm))?.toMap()
+    }
 
+    private fun lastLocationLocation(lm: LocationManager): Location? {
+        var best: Location? = null
+        for (provider in listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)) {
+            try {
+                val loc = lm.getLastKnownLocation(provider) ?: continue
+                if (best == null || loc.time > best!!.time) best = loc
+            } catch (e: Exception) { /* تجاهل */ }
+        }
+        return best
+    }
+
+    /**
+     * بدء تحديثات مستمرة كل 30 ثانية. يُرجع كائنًا لإيقاف التحديثات لاحقاً.
+     */
+    fun startUpdates(
+        context: Context,
+        minTimeMs: Long = 30_000L,
+        onLocation: (Map<String, Any>) -> Unit,
+    ): Any? {
+        if (!hasPermission(context)) return null
+        val lm = manager(context) ?: return null
+        val listener = object : LocationListener {
+            override fun onLocationChanged(location: Location) {
+                try { onLocation(location.toMap()) } catch (e: Exception) { /* تجاهل */ }
+            }
+
+            override fun onProviderEnabled(provider: String) {}
             override fun onProviderDisabled(provider: String) {}
         }
         var registered = false
-        try {
-            lm.requestLocationUpdates(
-                LocationManager.GPS_PROVIDER, 0L, 0f, listener, Looper.getMainLooper(),
-            )
-            registered = true
-        } catch (e: SecurityException) {
-            return null
-        } catch (e: IllegalArgumentException) {
-            registered = false
-        }
-        if (!registered) {
+        for (provider in enabledProviders(lm)) {
             try {
-                lm.requestLocationUpdates(
-                    LocationManager.NETWORK_PROVIDER, 0L, 0f, listener, Looper.getMainLooper(),
-                )
+                lm.requestLocationUpdates(provider, minTimeMs, 0f, listener, Looper.getMainLooper())
                 registered = true
-            } catch (e: SecurityException) {
-                return null
-            } catch (e: IllegalArgumentException) {
-                return null
-            }
+            } catch (e: Exception) { /* تجاهل */ }
         }
-        latch.await(timeoutMs, TimeUnit.MILLISECONDS)
-        try {
-            lm.removeUpdates(listener)
-        } catch (e: Exception) {
-            // تجاهل
-        }
-        val finalLoc: Location? = result ?: bestLastKnownLocation(context)
-        return finalLoc?.toMap()
+        return if (registered) listener else null
+    }
+
+    fun stopUpdates(context: Context, token: Any?) {
+        val listener = token as? LocationListener ?: return
+        val lm = manager(context) ?: return
+        try { lm.removeUpdates(listener) } catch (e: Exception) { /* تجاهل */ }
     }
 
     private fun Location.toMap(): Map<String, Any> = mapOf(
         "lat" to latitude,
         "lng" to longitude,
         "accuracy" to accuracy.toDouble(),
+        "speed" to if (hasSpeed()) speed.toDouble() else 0.0,
         "address" to "",
-        "timestamp" to FieldValue.serverTimestamp(),
+        "timestamp" to System.currentTimeMillis(),
     )
 }
