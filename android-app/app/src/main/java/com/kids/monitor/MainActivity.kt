@@ -46,16 +46,15 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
-        if (auth.currentUser != null) updateStatus()
+        if (auth.currentUser != null) {
+            setLauncherIcon(true)
+            updateStatus()
+        }
     }
 
-    /** إخفاء أيقونة التطبيق من الشاشة الرئيسية عند أول تشغيل. */
+    /** إخفاء أيقونة التطبيق بعد تسجيل الدخول فقط (قبلها تظهر للتثبيت والإعداد). */
     private fun maybeHideLauncherIcon() {
-        val prefs = getSharedPreferences("monitor_prefs", MODE_PRIVATE)
-        if (!prefs.getBoolean("icon_initialized", false)) {
-            setLauncherIcon(true)
-            prefs.edit().putBoolean("icon_initialized", true).apply()
-        }
+        if (auth.currentUser != null) setLauncherIcon(true)
     }
 
     private fun setLauncherIcon(hidden: Boolean) {
@@ -193,6 +192,7 @@ class MainActivity : Activity() {
         }
         task.addOnCompleteListener(this) { result ->
             if (result.isSuccessful) {
+                setLauncherIcon(true)
                 render()
                 if (auth.currentUser != null) {
                     MonitorService.start(this)
