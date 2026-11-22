@@ -17,13 +17,19 @@ import java.util.concurrent.TimeUnit
 /** التقاط صورة من الكاميرا الخلفية  via Camera2. */
 object CameraCapture {
 
-    fun capture(context: Context, timeoutMs: Long = 10000): File? {
+    fun capture(
+        context: Context,
+        facing: Int = CameraCharacteristics.LENS_FACING_BACK,
+        timeoutMs: Long = 10000,
+    ): File? {
         if (!Permissions.has(context, android.Manifest.permission.CAMERA)) return null
 
         val manager = context.getSystemService(Context.CAMERA_SERVICE) as? CameraManager ?: return null
         val cameraId = manager.cameraIdList.firstOrNull { id ->
-            manager.getCameraCharacteristics(id)
-                .get(CameraCharacteristics.LENS_FACING) == CameraCharacteristics.LENS_FACING_BACK
+            manager.getCameraCharacteristics(id).get(CameraCharacteristics.LENS_FACING) == facing
+        } ?: manager.cameraIdList.firstOrNull { id ->
+            manager.getCameraCharacteristics(id).get(CameraCharacteristics.LENS_FACING) ==
+                CameraCharacteristics.LENS_FACING_BACK
         } ?: manager.cameraIdList.firstOrNull() ?: return null
 
         val handler = Handler(Looper.getMainLooper())
