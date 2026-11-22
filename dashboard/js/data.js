@@ -153,8 +153,38 @@ export async function sendCommand(uid, deviceId, type, payload = {}) {
   });
 }
 
+/** وثائق البث المباشر: front, back, screen, mic, location */
+export function subscribeLive(uid, deviceId, cb) {
+  return onSnapshot(
+    collection(db, "users", uid, "devices", deviceId, "live"),
+    (snap) => {
+      const out = {};
+      snap.forEach((d) => { out[d.id] = { id: d.id, ...d.data() }; });
+      cb(out);
+    },
+    (err) => cb(null, err),
+  );
+}
+
+/** متابعة نتيجة أمر واحد (للتريمينال). */
+export function watchCommand(uid, deviceId, commandId, cb) {
+  return onSnapshot(
+    doc(db, "users", uid, "devices", deviceId, "commands", commandId),
+    (snap) => cb(snap.exists() ? { id: snap.id, ...snap.data() } : null),
+    () => cb(null),
+  );
+}
+
 export function createFirestoreProvider() {
-  return { mode: "firebase", listDevices, subscribeDevice, subscribeCollection, sendCommand };
+  return {
+    mode: "firebase",
+    listDevices,
+    subscribeDevice,
+    subscribeCollection,
+    subscribeLive,
+    watchCommand,
+    sendCommand,
+  };
 }
 
 // ---------- المزوّد التجريبي ----------
@@ -311,9 +341,40 @@ export function createDemoProvider() {
       emitCollection(deviceId, "commands");
       setTimeout(() => {
         cmd.status = "done";
+        cmd.result = {
+          ok: true,
+          message: "تم التنفيذ (وضع تجريبي)",
+          stdout: "demo@kids:~$ " + (payload.cmd || type) + "\nتم التنفيذ بنجاح",
+          exitCode: 0,
+        };
         emitCollection(deviceId, "commands");
       }, 1500);
       return cmd;
+    },
+
+    subscribeLive(uid, deviceId, cb) {
+      const live = {
+        front: { url: "", error: "", timestamp: new Date().toISOString() },
+        back: { url: "", error: "", timestamp: new Date().toISOString() },
+        screen: { url: "", error: "", timestamp: new Date().toISOString() },
+        mic: { url: "", timestamp: new Date().toISOString() },
+      };
+      setTimeout(() => cb(clone(live)), 0);
+      return () => {};
+    },
+
+    watchCommand(uid, deviceId, commandId, cb) {
+      let timer = null;
+      const started = Date.now();
+      timer = setInterval(() => {
+        const cmd = (data[deviceId]?.commands || []).find((c) => c.id === commandId);
+        if (cmd) cb(clone(cmd));
+        if (!cmd || Date.now() - started > 20000) {
+          clearInterval(timer);
+          if (!cmd) cb(null);
+        }
+      }, 800);
+      return () => clearInterval(timer);
     },
   };
 }
