@@ -1,4 +1,4 @@
-import { h, timeAgo, fmtDateTime, fmtDuration, emptyState, errorBox } from "../util.js";
+import { h, timeAgo, fmtDateTime, fmtDuration, emptyState } from "../util.js";
 
 const TABS = [
   { id: "calls", title: "المكالمات", icon: "📞" },
@@ -21,19 +21,24 @@ function row(icon, title, sub, meta, ts) {
 
 function callRow(it) {
   const raw = String(it.type ?? it.callType ?? it.direction ?? "").toLowerCase();
-  const dir = raw.includes("out") ? "out" : raw.includes("miss") ? "miss" : "in";
+  const dir = raw.includes("out") ? "out" : raw.includes("miss") ? "miss" : raw.includes("reject") ? "miss" : "in";
   const icon = dir === "out" ? "↗️" : dir === "miss" ? "✖️" : "↙️";
   const label = dir === "out" ? "صادرة" : dir === "miss" ? "فائتة" : "واردة";
   const name = it.name || it.contactName || it.number || "رقم غير معروف";
   const dur = it.duration ? fmtDuration(it.duration) : "";
-  return row(icon, name, it.number || "", [label, dur, fmtDateTime(it.timestamp)].filter(Boolean).join(" · "), it.timestamp);
+  const rec = it.recording === "failed" ? "التسجيل غير متاح" : it.recording === "saved" ? "مسجلة" : "";
+  return row(icon, name, it.number || "", [label, dur, rec, fmtDateTime(it.timestamp)].filter(Boolean).join(" · "), it.timestamp);
 }
 
 function messageRow(it) {
   const sent = String(it.type ?? "").toLowerCase() === "sent" || it.sent === true;
   const name = it.name || it.number || "رقم غير معروف";
   const body = it.body || it.text || it.message || "";
-  return row("💬", name, body, sent ? "مرسلة" : "واردة", it.timestamp);
+  const node = row("💬", name, body, sent ? "مرسلة" : "واردة", it.timestamp);
+  node.classList.add("clickable");
+  node.title = "اضغط لعرض الرسالة كاملة";
+  node.addEventListener("click", () => openFull(name, body, it.timestamp));
+  return node;
 }
 
 function notifRow(it) {
@@ -44,8 +49,24 @@ function contactRow(it) {
   return row("👤", it.name || "جهة اتصال", it.number || "", "جهة اتصال", null);
 }
 
+function openFull(title, body, ts) {
+  const root = document.getElementById("modalRoot");
+  const overlay = h("div", { class: "modal-overlay show" });
+  const card = h("div", { class: "modal-card", role: "dialog" });
+  card.append(h("h3", { text: title }));
+  card.append(h("div", { class: "full-message", text: body }));
+  card.append(h("div", { class: "muted", text: fmtDateTime(ts) }));
+  const close = h("button", { class: "btn primary", type: "button", text: "إغلاق" });
+  close.addEventListener("click", () => overlay.remove());
+  card.append(h("div", { class: "modal-actions" }, [close]));
+  overlay.append(card);
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
+  root.append(overlay);
+}
+
 export function render(container, ctx) {
   container.innerHTML = "";
+  const fixed = ctx.filter || null;
   const root = h("div", { class: "comms" });
   const tabsBar = h("div", { class: "tabs" });
   const search = h("input", { class: "input search", type: "search", placeholder: "بحث في القائمة..." });
@@ -53,15 +74,16 @@ export function render(container, ctx) {
   root.append(tabsBar, h("div", { class: "comms-toolbar" }, [search]), list);
   container.append(root);
 
+  const tabs = fixed ? TABS.filter((t) => t.id === fixed) : TABS;
   const state = {
-    tab: "calls",
+    tab: fixed || "calls",
     q: "",
     data: { calls: [], messages: [], notifications: [], contacts: [] },
   };
   const tabBtns = {};
 
-  for (const t of TABS) {
-    const btn = h("button", { class: "tab", type: "button" }, [
+  for (const t of tabs) {
+    const btn = h("button", { class: "tab" + (fixed ? " single" : ""), type: "button" }, [
       h("span", { class: "tab-icon", text: t.icon }),
       h("span", { class: "tab-title", text: t.title }),
       h("span", { class: "tab-count", text: "0" }),
@@ -80,7 +102,7 @@ export function render(container, ctx) {
     renderList();
   });
 
-  const unsubs = TABS.map((t) =>
+  const unsubs = tabs.map((t) =>
     ctx.data.subscribeCollection(ctx.uid, ctx.deviceId, t.id, (items, err) => {
       state.data[t.id] = err ? [] : items || [];
       refreshTabs();
@@ -89,7 +111,7 @@ export function render(container, ctx) {
   );
 
   function refreshTabs() {
-    for (const t of TABS) {
+    for (const t of tabs) {
       const active = state.tab === t.id;
       tabBtns[t.id].classList.toggle("active", active);
       tabBtns[t.id].querySelector(".tab-count").textContent = String(state.data[t.id].length);
