@@ -13,6 +13,7 @@ import { render as renderOverview } from "./sections/overview.js";
 import { render as renderLocation } from "./sections/location.js";
 import { render as renderComms } from "./sections/comms.js";
 import { render as renderMedia } from "./sections/media.js";
+import { render as renderLive } from "./sections/live.js";
 import { render as renderCombined, PANELS } from "./sections/combined.js";
 
 const PANEL_IDS = PANELS.map((p) => p.id);
@@ -22,6 +23,7 @@ const NAV = [
   { id: "location", title: "الموقع الجغرافي", icon: "📍" },
   { id: "comms", title: "المكالمات والاتصالات", icon: "💬" },
   { id: "media", title: "الوسائط والتحكم", icon: "🎮" },
+  { id: "live", title: "مباشر", icon: "🎥" },
   { id: "combined", title: "عرض مدمج", icon: "🧩" },
 ];
 
@@ -30,6 +32,7 @@ const SECTIONS = {
   location: renderLocation,
   comms: renderComms,
   media: renderMedia,
+  live: renderLive,
 };
 
 const AUTH_ERRORS = {
@@ -270,6 +273,12 @@ function renderCurrent() {
     state.destroy = SECTIONS[state.nav](main, ctx);
   }
   main.scrollTop = 0;
+}
+
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("sw.js").catch(() => {});
+  });
 }
 
 init();
