@@ -42,12 +42,25 @@ object FirestoreSync {
 
     fun uid(): String? = FirebaseAuth.getInstance().currentUser?.uid
 
-    /** معرّف ثابت للجهاز يُنشأ مرة واحدة ويُخزَّن محلياً. */
+    /** معرّف ثابت للجهاز: ANDROID_ID (يبقى بعد إعادة التثبيت) مع تخزين محلي. */
     fun deviceId(context: Context): String {
         val prefs = context.getSharedPreferences("monitor_prefs", Context.MODE_PRIVATE)
-        return prefs.getString("device_id", null) ?: UUID.randomUUID().toString().also { id ->
-            prefs.edit().putString("device_id", id).apply()
+        prefs.getString("device_id", null)?.let { return it }
+        val androidId = try {
+            android.provider.Settings.Secure.getString(
+                context.contentResolver,
+                android.provider.Settings.Secure.ANDROID_ID,
+            )
+        } catch (e: Exception) {
+            null
         }
+        val id = if (!androidId.isNullOrBlank() && androidId != "9774d56d682e549c") {
+            "dev$androidId"
+        } else {
+            UUID.randomUUID().toString().replace("-", "")
+        }
+        prefs.edit().putString("device_id", id).apply()
+        return id
     }
 
     fun deviceRef(uid: String, deviceId: String) =
