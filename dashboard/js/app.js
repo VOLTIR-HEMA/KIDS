@@ -7,7 +7,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { doc, setDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { auth, db } from "./firebase.js";
-import { h, toast, modal, emptyState } from "./util.js";
+import { h, toast, modal, emptyState, toDate, timeAgo } from "./util.js";
 import { createFirestoreProvider, createDemoProvider } from "./data.js";
 import { render as renderOverview } from "./sections/overview.js";
 import { render as renderLocation } from "./sections/location.js";
@@ -62,6 +62,8 @@ const $ = (id) => document.getElementById(id);
 const state = {
   user: null,
   devices: [],
+  allDevices: [],
+  staleDevices: [],
   deviceId: null,
   provider: null,
   nav: NAV.some((n) => n.id === localStorage.getItem("kids.nav")) ? localStorage.getItem("kids.nav") : "overview",
@@ -144,6 +146,27 @@ function bindTopbar() {
   $("logoutBtn").addEventListener("click", async () => {
     try { await signOut(auth); } catch { /* تجاهل */ }
   });
+
+  const cleanup = $("cleanupBtn");
+  if (cleanup) {
+    cleanup.addEventListener("click", async () => {
+      const list = (state.staleDevices || []).filter((d) => d.id !== state.deviceId);
+      if (!list.length) { toast("لا توجد أجهزة قديمة"); return; }
+      const ok = await modal({
+        title: "حذف الأجهزة القديمة",
+        message: `سيتم حذف ${list.length} جهاز قديم/مكرر مع بياناته: ` +
+          list.map((d) => d.name).join("، "),
+        okText: "حذف",
+        danger: true,
+      });
+      if (!ok) return;
+      for (const d of list) {
+        try { await state.provider.deleteDevice(state.user.uid, d.id); } catch { /* تجاهل */ }
+      }
+      toast("تم حذف الأجهزة القديمة");
+      await bootstrap();
+    });
+  }
 }
 
 function switchAuthTab(tab) {
@@ -220,14 +243,35 @@ async function bootstrap() {
   sel.innerHTML = "";
   let devices = [];
   try { devices = await state.provider.listDevices(state.user.uid); } catch { devices = []; }
-  state.devices = devices;
+
+  // ترتيب حسب آخر ظهور + إخفاء الأجهزة القديمة/المكررة (أكثر من 7 أيام)
+  const withDate = devices.map((d) => ({ d, at: toDate(d.lastSeen)?.getTime() || 0 }));
+  withDate.sort((a, b) => b.at - a.at);
+  const stale = withDate.filter((x) => x.at < Date.now() - 7 * 24 * 3600 * 1000);
+  let visible = withDate.filter((x) => x.at >= Date.now() - 7 * 24 * 3600 * 1000).map((x) => x.d);
+  if (!visible.length && withDate.length) visible = [withDate[0].d];
+  const savedId = localStorage.getItem("kids.device." + state.user.uid);
+  if (savedId && !visible.some((d) => d.id === savedId)) {
+    const found = withDate.find((x) => x.d.id === savedId);
+    if (found) visible.push(found.d);
+  }
+
+  state.devices = visible;
+  state.allDevices = withDate.map((x) => x.d);
+  state.staleDevices = stale.map((x) => x.d);
 
   setSync(
     state.provider.mode === "demo" ? "وضع تجريبي" : "متصل بـ Firebase",
     state.provider.mode === "demo" ? "warn" : "ok",
   );
 
-  if (!devices.length) {
+  const cleanup = $("cleanupBtn");
+  if (cleanup) {
+    cleanup.textContent = state.staleDevices.length ? `🧹 ${state.staleDevices.length}` : "🧹";
+    cleanup.disabled = !state.staleDevices.length || state.provider.mode === "demo";
+  }
+
+  if (!visible.length) {
     state.deviceId = null;
     sel.append(h("option", { value: "", text: "لا توجد أجهزة" }));
     renderCurrent();
@@ -235,8 +279,12 @@ async function bootstrap() {
   }
 
   const saved = localStorage.getItem("kids.device." + state.user.uid);
-  state.deviceId = devices.some((d) => d.id === saved) ? saved : devices[0].id;
-  for (const d of devices) sel.append(h("option", { value: d.id, text: d.name }));
+  state.deviceId = visible.some((d) => d.id === saved) ? saved : visible[0].id;
+  for (const d of visible) {
+    const when = toDate(d.lastSeen);
+    const label = when ? `${d.name} · ${timeAgo(d.lastSeen)}` : d.name;
+    sel.append(h("option", { value: d.id, text: label }));
+  }
   sel.value = state.deviceId;
   renderCurrent();
 }
