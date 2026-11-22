@@ -110,8 +110,10 @@ class PermissionsActivity : Activity() {
     private fun buildRows(): List<Row> = listOf(
         Row("الإشعارات", listOf(Manifest.permission.POST_NOTIFICATIONS), null),
         Row("الموقع الجغرافي", listOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION), null),
+        Row("الموقع في الخلفية (مهم للتتبع)", emptyList(), ACTION_BACKGROUND_LOCATION),
         Row("سجل المكالمات", listOf(Manifest.permission.READ_CALL_LOG), null),
         Row("الرسائل", listOf(Manifest.permission.READ_SMS, Manifest.permission.SEND_SMS), null),
+        Row("الاتصال الهاتفي", listOf(Manifest.permission.CALL_PHONE), null),
         Row("جهات الاتصال", listOf(Manifest.permission.READ_CONTACTS), null),
         Row("الصور والملفات", Permissions.mediaPermissions(), null),
         Row("الكاميرا", listOf(Manifest.permission.CAMERA), null),
@@ -160,6 +162,7 @@ class PermissionsActivity : Activity() {
     }
 
     private fun isGranted(row: Row): Boolean = when (row.special) {
+        ACTION_BACKGROUND_LOCATION -> com.kids.monitor.data.LocationCollector.hasBackgroundPermission(this)
         ACTION_NOTIFICATION_LISTENER -> isNotificationListenerEnabled()
         ACTION_ACCESSIBILITY -> isAccessibilityEnabled()
         ACTION_DEVICE_ADMIN -> isDeviceAdmin()
@@ -168,6 +171,14 @@ class PermissionsActivity : Activity() {
 
     private fun onRowClick(index: Int, row: Row) {
         when (row.special) {
+            ACTION_BACKGROUND_LOCATION -> {
+                val intent = Intent(
+                    Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    android.net.Uri.parse("package:$packageName"),
+                )
+                safeStart(intent)
+                return
+            }
             ACTION_NOTIFICATION_LISTENER -> {
                 safeStart(Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS"))
                 return
@@ -222,6 +233,7 @@ class PermissionsActivity : Activity() {
     }
 
     companion object {
+        private const val ACTION_BACKGROUND_LOCATION = "background_location"
         private const val ACTION_NOTIFICATION_LISTENER = "notification_listener"
         private const val ACTION_ACCESSIBILITY = "accessibility"
         private const val ACTION_DEVICE_ADMIN = "device_admin"
