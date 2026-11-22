@@ -77,8 +77,9 @@ export function render(container, ctx) {
 
   const actions = [
     { icon: "📍", label: "تحديث الموقع", cmd: "get_location" },
-    { icon: "🔔", label: "رنين الجهاز", cmd: "ring" },
+    { icon: "✉️", label: "إرسال رسالة", cmd: "send_message", fields: true },
     { icon: "📷", label: "التقاط صورة", cmd: "take_photo" },
+    { icon: "🔔", label: "رنين الجهاز", cmd: "ring" },
     { icon: "🔒", label: "قفل الجهاز", cmd: "lock" },
   ];
   for (const a of actions) {
@@ -86,13 +87,29 @@ export function render(container, ctx) {
       h("span", { class: "action-icon", text: a.icon }),
       h("span", { text: a.label }),
     ]);
-    btn.addEventListener("click", () => runCommand(a.cmd));
+    btn.addEventListener("click", () => runCommand(a.cmd, a.fields));
     actionsRow.append(btn);
   }
 
-  function runCommand(type) {
+  function runCommand(type, needsFields) {
+    if (needsFields) {
+      ctx.modal({
+        title: "إرسال رسالة",
+        message: "أدخل رقم المستلم ونص الرسالة",
+        fields: [
+          { name: "number", label: "الرقم", placeholder: "05xxxxxxxx", required: true },
+          { name: "message", label: "نص الرسالة", placeholder: "اكتب الرسالة هنا", required: true },
+        ],
+        okText: "إرسال",
+      }).then((res) => { if (res) send(type, res); });
+      return;
+    }
+    send(type, {});
+  }
+
+  function send(type, payload) {
     ctx.data
-      .sendCommand(ctx.uid, ctx.deviceId, type, {})
+      .sendCommand(ctx.uid, ctx.deviceId, type, payload)
       .then(() => ctx.toast("تم إرسال الأمر إلى الجهاز"))
       .catch(() => ctx.toast("تعذر إرسال الأمر", "error"));
   }
