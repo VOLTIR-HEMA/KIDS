@@ -263,9 +263,9 @@ class ScreenShareService : Service() {
         private const val ACTION_STOP = "com.kids.monitor.STOP_SCREEN_SHARE"
         private const val CHANNEL_ID = "screen_share_v2"
         private const val NOTIFICATION_ID = 1002
-        private const val CAPTURE_INTERVAL_MS = 3000L
-        private const val MAX_WIDTH = 540
-        private const val QUALITY = 45
+        private const val CAPTURE_INTERVAL_MS = 1500L
+        private const val MAX_WIDTH = 480
+        private const val QUALITY = 40
 
         @Volatile
         private var instance: ScreenShareService? = null

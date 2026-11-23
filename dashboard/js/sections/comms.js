@@ -19,15 +19,58 @@ function row(icon, title, sub, meta, ts) {
   ]);
 }
 
-function callRow(it) {
+function callRow(it, ctx) {
   const raw = String(it.type ?? it.callType ?? it.direction ?? "").toLowerCase();
   const dir = raw.includes("out") ? "out" : raw.includes("miss") ? "miss" : raw.includes("reject") ? "miss" : "in";
   const icon = dir === "out" ? "↗️" : dir === "miss" ? "✖️" : "↙️";
   const label = dir === "out" ? "صادرة" : dir === "miss" ? "فائتة" : "واردة";
   const name = it.name || it.contactName || it.number || "رقم غير معروف";
   const dur = it.duration ? fmtDuration(it.duration) : "";
-  const rec = it.recording === "failed" ? "التسجيل غير متاح" : it.recording === "saved" ? "مسجلة" : "";
-  return row(icon, name, it.number || "", [label, dur, rec, fmtDateTime(it.timestamp)].filter(Boolean).join(" · "), it.timestamp);
+  const rec = it.recording === "failed" ? "التسجيل غير متاح" : (it.url || it.dataUrl) ? "مسجلة" : "";
+  const node = row(icon, name, it.number || "", [label, dur, rec, fmtDateTime(it.timestamp)].filter(Boolean).join(" · "), it.timestamp);
+
+  const src = it.url || it.dataUrl || "";
+  const actions = h("div", { class: "row-actions" });
+  if (src) {
+    const play = h("button", { class: "icon-btn", type: "button", title: "تشغيل التسجيل", text: "▶️" });
+    play.addEventListener("click", (e) => { e.stopPropagation(); openAudio(src, `تسجيل مكالمة ${it.number || name}`); });
+    actions.append(play);
+  }
+  const del = h("button", { class: "icon-btn danger", type: "button", title: "حذف المكالمة والتسجيل", text: "🗑" });
+  del.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    const ok = await ctx.modal({
+      title: "حذف المكالمة",
+      message: `سيتم حذف المكالمة${src ? " وتسجيلها الصوتي" : ""} نهائياً. هل تريد المتابعة؟`,
+      okText: "حذف",
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      if (ctx.data.deleteDocItem) await ctx.data.deleteDocItem(ctx.uid, ctx.deviceId, "calls", it);
+      ctx.toast("تم حذف المكالمة");
+    } catch {
+      ctx.toast("تعذر الحذف", "error");
+    }
+  });
+  actions.append(del);
+  node.append(actions);
+  return node;
+}
+
+/** تشغيل تسجيل صوتي لمكالمة في نافذة. */
+function openAudio(src, title) {
+  const overlay = h("div", { class: "modal-overlay show" });
+  const card = h("div", { class: "modal-card" });
+  const audio = h("audio", { class: "audio-player", controls: true, autoplay: true, preload: "auto", src, style: "width:100%" });
+  const close = h("button", { class: "btn primary", type: "button", text: "إغلاق" });
+  close.addEventListener("click", () => { try { audio.pause(); } catch { /* تجاهل */ } overlay.remove(); });
+  card.append(h("h3", { text: title }), audio, h("div", { class: "modal-actions" }, [close]));
+  overlay.append(card);
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) { try { audio.pause(); } catch { /* تجاهل */ } overlay.remove(); }
+  });
+  document.getElementById("modalRoot").append(overlay);
 }
 
 function messageRow(it) {
@@ -133,7 +176,7 @@ export function render(container, ctx) {
       return;
     }
     for (const it of filtered) {
-      if (state.tab === "calls") list.append(callRow(it));
+      if (state.tab === "calls") list.append(callRow(it, ctx));
       else if (state.tab === "messages") list.append(messageRow(it));
       else if (state.tab === "notifications") list.append(notifRow(it));
       else list.append(contactRow(it));

@@ -69,6 +69,7 @@ const state = {
   nav: NAV.some((n) => n.id === localStorage.getItem("kids.nav")) ? localStorage.getItem("kids.nav") : "overview",
   combined: PANEL_IDS,
   destroy: null,
+  liveUnsub: null,
 };
 
 try {
@@ -167,6 +168,138 @@ function bindTopbar() {
       await bootstrap();
     });
   }
+
+  const lookup = $("lookupBtn");
+  if (lookup) lookup.addEventListener("click", openLookup);
+
+  const banner = $("callBanner");
+  if (banner) {
+    banner.addEventListener("click", () => {
+      state.nav = "calls";
+      localStorage.setItem("kids.nav", "calls");
+      updateNavActive();
+      renderCurrent();
+    });
+  }
+}
+
+/** بحث عن رقم بالاسم في بيانات الأجهزة (شبيه تروكولر، بدون إنترنت إضافي). */
+async function openLookup() {
+  if (!state.user) return;
+  const values = await modal({
+    title: "🔎 بحث عن رقم",
+    message: "اكتب الرقم أو جزءاً منه للبحث في جهات الاتصال والمكالمات والرسائل المرفوعة من أجهزتك.",
+    fields: [{ name: "number", label: "الرقم", placeholder: "05xxxxxxxx", type: "tel" }],
+    okText: "بحث",
+  });
+  if (!values) return;
+  const ids = (state.allDevices || state.devices || []).map((d) => d.id);
+  let results = [];
+  try {
+    if (state.provider.searchNumber) {
+      results = await state.provider.searchNumber(state.user.uid, ids, values.number);
+    }
+  } catch {
+    results = [];
+  }
+  showLookupResults(values.number, results);
+}
+
+function showLookupResults(query, results) {
+  const overlay = h("div", { class: "modal-overlay show" });
+  const card = h("div", { class: "modal-card lookup-card" });
+  const close = h("button", { class: "btn primary", type: "button", text: "إغلاق" });
+  close.addEventListener("click", () => overlay.remove());
+
+  card.append(h("h3", { text: `نتائج البحث عن ${query}` }));
+  if (!results.length) {
+    card.append(h("p", { class: "muted", text: "لا توجد نتائج. تأكد من رفع جهات الاتصال/المكالمات من الجهاز (صلاحية جهات الاتصال + سجل المكالمات)." }));
+  } else {
+    const list = h("div", { class: "list" });
+    for (const r of results) {
+      const deviceName = (state.allDevices.find((d) => d.id === r.deviceId) || {}).name || "";
+      const row = h("div", { class: "list-row lookup-row" }, [
+        h("div", { class: "row-icon", text: r.name ? "👤" : "❓" }),
+        h("div", { class: "row-body" }, [
+          h("div", { class: "row-title", text: r.name || "رقم غير مسجّل" }),
+          h("div", { class: "row-sub", text: r.number, dir: "ltr" }),
+          h("div", { class: "row-meta muted", text: [r.sources.join(" · "), deviceName, r.lastAt ? timeAgo(r.lastAt) : ""].filter(Boolean).join(" — ") }),
+        ]),
+      ]);
+      const callBtn = h("button", { class: "btn ghost sm", type: "button", text: "📞" });
+      callBtn.title = "اتصال بهذا الرقم من هذا الجهاز";
+      callBtn.addEventListener("click", async () => {
+        try {
+          await state.provider.sendCommand(state.user.uid, r.deviceId, "make_call", { number: r.number });
+          toast("تم إرسال أمر الاتصال");
+        } catch {
+          toast("تعذر إرسال الأمر", "error");
+        }
+      });
+      row.append(callBtn);
+      list.append(row);
+    }
+    card.append(list);
+  }
+  card.append(h("div", { class: "modal-actions" }, [close]));
+  overlay.append(card);
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
+  document.getElementById("modalRoot").append(overlay);
+}
+
+/** شريط علوي يظهر فور بدء أي مكالمة على الجهاز (رقم + اسم + تسجيل). */
+function watchCallBanner(ctx) {
+  const banner = $("callBanner");
+  if (!banner) return;
+  if (state.liveUnsub) {
+    try { state.liveUnsub(); } catch { /* تجاهل */ }
+    state.liveUnsub = null;
+  }
+  banner.classList.add("hidden");
+  banner.innerHTML = "";
+  if (!ctx || state.provider.mode === "demo") return;
+  try {
+    state.liveUnsub = state.provider.subscribeLive(ctx.uid, ctx.deviceId, (data, err) => {
+      if (err || !data) { banner.classList.add("hidden"); banner.innerHTML = ""; return; }
+      const call = data.call;
+      if (!call || !call.active) { banner.classList.add("hidden"); banner.innerHTML = ""; return; }
+      const age = frameAge(call.updatedAt || call.timestamp);
+      if (age > 3 * 60 * 1000) { banner.classList.add("hidden"); banner.innerHTML = ""; return; }
+      const name = call.name || "";
+      banner.innerHTML = "";
+      banner.classList.remove("hidden");
+      banner.append(
+        h("span", { class: "call-banner-icon", text: "📞" }),
+        h("div", { class: "call-banner-body" }, [
+          h("div", { class: "call-banner-title" }, [
+            h("span", { class: "call-live-dot" }),
+            h("strong", { text: name || call.number || "مكالمة جارية" }),
+          ]),
+          h("div", { class: "call-banner-sub" }, [
+            h("span", { text: [
+              call.number && name ? call.number : "",
+              call.direction === "outgoing" ? "صادرة" : "واردة",
+              call.recording ? "🔴 يتم التسجيل" : "",
+              timeAgo(call.startedAt || call.timestamp),
+            ].filter(Boolean).join(" · ") }),
+          ]),
+        ]),
+        h("span", { class: "call-banner-go", text: "عرض المكالمات ←" }),
+      );
+    });
+  } catch {
+    banner.classList.add("hidden");
+  }
+}
+
+function frameAge(ts) {
+  if (ts === null || ts === undefined) return Infinity;
+  if (typeof ts.toDate === "function") {
+    const d = ts.toDate();
+    return isNaN(d) ? Infinity : Date.now() - d.getTime();
+  }
+  const ms = typeof ts === "number" ? ts : Date.parse(ts);
+  return isFinite(ms) ? Date.now() - ms : Infinity;
 }
 
 function switchAuthTab(tab) {
@@ -304,6 +437,7 @@ function renderCurrent() {
   main.innerHTML = "";
 
   if (!state.deviceId) {
+    watchCallBanner(null);
     main.append(emptyState(
       "📵",
       "لا توجد أجهزة مرتبطة",
@@ -321,6 +455,8 @@ function renderCurrent() {
     modal,
     compact: false,
   };
+
+  watchCallBanner(ctx);
 
   if (state.nav === "combined") {
     state.destroy = renderCombined(main, ctx, state.combined, (sel) => {

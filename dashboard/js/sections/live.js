@@ -29,16 +29,22 @@ export function render(container, ctx) {
   const screenImg = h("img", { class: "live-frame", alt: "الشاشة" });
   screenImg.style.display = "none";
   const screenInfo = h("div", { class: "muted small", text: "لا توجد لقطة بعد" });
+  const screenBadge = h("span", { class: "live-badge hidden", text: "قديمة" });
+  const screenFull = h("button", { class: "btn ghost sm", type: "button", text: "⛶ تكبير", disabled: true });
+  screenFull.addEventListener("click", () => {
+    if (screenImg.src) openLiveFullscreen(screenImg.src, "شاشة الجهاز");
+  });
   const screenCard = h("div", { class: "card live-card" }, [
-    h("div", { class: "live-head" }, [h("span", { class: "live-dot" }), h("strong", { text: "شاشة الجهاز" })]),
+    h("div", { class: "live-head" }, [h("span", { class: "live-dot" }), h("strong", { text: "شاشة الجهاز" }), screenBadge]),
     screenImg,
     screenInfo,
     h("div", { class: "actions-row" }, [
       actionButton("📸", "لقطة الآن", () => send("take_screenshot", {}, ctx)),
       actionButton("🔄", "فحص الحالة", () => send("screen_status", {}, ctx)),
       actionButton("⏹️", "إيقاف المشاركة", () => send("screen_stop", {}, ctx)),
+      screenFull,
     ]),
-    h("div", { class: "muted small", text: "لبدء البث: افتح التطبيق ← «مشاركة الشاشة» ← موافق مرة واحدة. اللقطات تُحفظ في قسم الوسائط مع زر حذف." }),
+    h("div", { class: "muted small", text: "بث شبه لحظي: لقطة كل 1.5 ثانية. لبدء البث: افتح التطبيق ← «مشاركة الشاشة» ← موافق مرة واحدة. اللقطات المحفوظة في قسم الوسائط مع زر حذف." }),
   ]);
   root.append(screenCard);
 
@@ -174,10 +180,17 @@ export function render(container, ctx) {
     const src = screen.url || screen.dataUrl;
     if (src && src !== screenImg.src) screenImg.src = src;
     screenImg.style.display = src ? "block" : "none";
+    screenFull.disabled = !src;
+    const age = frameAgeMs(screen);
+    const stale = src && age > 30_000;
+    screenBadge.classList.toggle("hidden", !stale);
+    screenImg.classList.toggle("stale", stale);
     if (screen.error) {
       screenInfo.textContent = "خطأ: " + screen.error;
     } else if (src) {
-      screenInfo.textContent = "آخر تحديث: " + fmtDateTime(screen.timestamp);
+      screenInfo.textContent = stale
+        ? `آخر لقطة ${ageText(age)} — البث متوقف أو الشاشة مقفلة`
+        : "مباشر · آخر تحديث " + ageText(age);
     }
   }
 
@@ -206,10 +219,17 @@ function cameraCard(kind, label, ctx, saved, storeKey) {
   const img = h("img", { class: "live-frame", alt: label });
   img.style.display = "none";
   const info = h("div", { class: "muted small", text: box.checked ? "جارٍ التشغيل…" : "الكاميرا متوقفة" });
+  const badge = h("span", { class: "live-badge hidden", text: "قديمة" });
+  const full = h("button", { class: "btn ghost sm", type: "button", text: "⛶ تكبير", disabled: true });
+  full.addEventListener("click", () => {
+    const src = img.src;
+    if (src) openLiveFullscreen(src, label);
+  });
   const card = h("div", { class: "card live-card" }, [
     h("label", { class: "live-check" }, [box, h("strong", { text: label })]),
-    img,
+    h("div", { class: "live-frame-wrap" }, [img, badge]),
     info,
+    h("div", { class: "actions-row" }, [full]),
   ]);
   box.addEventListener("change", () => {
     saved[kind] = box.checked;
@@ -224,10 +244,59 @@ function cameraCard(kind, label, ctx, saved, storeKey) {
       const src = data.url || data.dataUrl;
       if (src && src !== img.src) img.src = src;
       img.style.display = src ? "block" : "none";
+      full.disabled = !src;
+      const age = frameAgeMs(data);
+      const stale = src && age > 15_000;
+      badge.classList.toggle("hidden", !stale);
+      img.classList.toggle("stale", stale);
       if (data.error) info.textContent = "خطأ: " + data.error;
-      else if (src) info.textContent = "آخر صورة: " + fmtDateTime(data.timestamp);
+      else if (src) {
+        info.textContent = stale
+          ? `آخر صورة ${ageText(age)} — الكاميرا متوقفة (افتح التطبيق وأعد التشغيل)`
+          : "مباشر · " + ageText(age);
+      }
     },
   };
+}
+
+/** فتح صورة البث في وضع ملء الشاشة. */
+function openLiveFullscreen(src, title) {
+  const overlay = h("div", { class: "viewer-overlay" });
+  const closeBtn = h("button", { class: "btn ghost sm", type: "button", text: "✕ إغلاق" });
+  const img = h("img", { class: "viewer-media", src, alt: title || "بث" });
+  overlay.append(
+    h("div", { class: "viewer-head" }, [h("div", { class: "viewer-title", text: title || "بث مباشر" }), closeBtn]),
+    h("div", { class: "viewer-stage" }, [img]),
+    h("div", { class: "viewer-bar" }, [
+      h("a", { class: "btn primary sm", href: src, target: "_blank", rel: "noopener", download: "live.jpg", text: "⬇ تنزيل اللقطة" }),
+    ]),
+  );
+  const close = () => {
+    overlay.remove();
+    document.removeEventListener("keydown", onKey);
+  };
+  const onKey = (e) => { if (e.key === "Escape") close(); };
+  closeBtn.addEventListener("click", close);
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+  document.addEventListener("keydown", onKey);
+  document.body.append(overlay);
+}
+
+function frameAgeMs(data) {
+  if (!data) return Infinity;
+  const raw = data.updatedAt || data.timestamp;
+  if (raw === null || raw === undefined) return Infinity;
+  const ms = typeof raw === "number" ? raw : Date.parse(raw);
+  return isFinite(ms) ? Math.max(0, Date.now() - ms) : Infinity;
+}
+
+function ageText(ms) {
+  if (!isFinite(ms)) return "الآن";
+  const s = Math.round(ms / 1000);
+  if (s < 5) return "الآن";
+  if (s < 60) return `قبل ${s} ثانية`;
+  const m = Math.round(s / 60);
+  return m < 60 ? `قبل ${m} دقيقة` : `قبل ${Math.round(m / 60)} ساعة`;
 }
 
 function actionButton(icon, label, onClick) {

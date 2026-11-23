@@ -121,7 +121,7 @@ class CameraService : Service() {
             )
             return
         }
-        val file: File = shrink(raw)
+        val file: File = shrink(raw, 560, 50)
         val url = StorageUploader.uploadSync(file, "camera/$kind/${file.name}")
         val inline = if (url == null) StorageUploader.inlineData(file, 700_000) else null
         FirestoreSync.setLive(
@@ -225,7 +225,7 @@ class CameraService : Service() {
         private const val ACTION_STOP_ALL = "com.kids.monitor.STOP_CAMERA_ALL"
         private const val CHANNEL_ID = "camera_stream_v2"
         private const val NOTIFICATION_ID = 1003
-        private const val INTERVAL_MS = 2000L
+        private const val INTERVAL_MS = 1500L
         private const val MAX_SESSION_MS = 30 * 60 * 1000L
 
         fun start(context: Context, facing: Int) {

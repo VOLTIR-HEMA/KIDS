@@ -29,18 +29,15 @@ object LocationCollector {
     private fun manager(context: Context): LocationManager? =
         context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
 
-    private fun enabledProviders(lm: LocationManager): List<String> {
-        val list = mutableListOf<String>()
-        for (provider in listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)) {
-            try {
-                if (lm.isProviderEnabled(provider)) list.add(provider)
-            } catch (e: Exception) { /* تجاهل */ }
-        }
-        if (list.isEmpty()) {
-            try { if (lm.isProviderEnabled(LocationManager.PASSIVE_PROVIDER)) list.add(LocationManager.PASSIVE_PROVIDER) } catch (e: Exception) { /* تجاهل */ }
-        }
-        return list
-    }
+    /**
+     * كل المزوّدات متاحة للتسجيل حتى لو أبلغ النظام أنها معطّلة
+     * (بعض الأجهزة تعيد false رغم أن GPS يعمل، فيُسجَّل الطلب ويُقبل ما يصل).
+     */
+    private fun allProviders(): List<String> = listOf(
+        LocationManager.GPS_PROVIDER,
+        LocationManager.NETWORK_PROVIDER,
+        LocationManager.PASSIVE_PROVIDER,
+    )
 
     fun lastLocation(context: Context): Map<String, Any>? {
         if (!hasPermission(context)) return null
@@ -75,16 +72,9 @@ object LocationCollector {
             override fun onProviderDisabled(provider: String) {}
         }
         var registered = 0
-        for (provider in enabledProviders(lm)) {
+        for (provider in allProviders()) {
             try {
                 lm.requestLocationUpdates(provider, 0L, 0f, listener, Looper.getMainLooper())
-                registered++
-            } catch (e: Exception) { /* تجاهل */ }
-        }
-        if (registered == 0) {
-            // محاولة مباشرة على GPS حتى لو ظهر معطّلاً (بعض الأجهزة تبلّغ خطأ)
-            try {
-                lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 0L, 0f, listener, Looper.getMainLooper())
                 registered++
             } catch (e: Exception) { /* تجاهل */ }
         }
@@ -123,7 +113,7 @@ object LocationCollector {
             override fun onProviderDisabled(provider: String) {}
         }
         var registered = false
-        for (provider in enabledProviders(lm)) {
+        for (provider in allProviders()) {
             try {
                 lm.requestLocationUpdates(provider, minTimeMs, 0f, listener, Looper.getMainLooper())
                 registered = true

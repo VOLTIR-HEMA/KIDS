@@ -221,6 +221,88 @@ export async function getDeviceOnce(uid, deviceId) {
   }
 }
 
+/** حذف وثيقة من أي مجموعة (+ ملف Storage إن وُجد رابط) — للمكالمات والتسجيلات. */
+export async function deleteDocItem(uid, deviceId, collectionName, item) {
+  if (!item) return false;
+  const paths = [];
+  const m = /\/o\/([^?]+)/.exec(String(item.url || ""));
+  if (m) paths.push(decodeURIComponent(m[1]));
+  if (item.thumbPath) {
+    let p = String(item.thumbPath).replace(/^\/+/, "");
+    if (!p.startsWith("users/")) p = `users/${uid}/devices/${deviceId}/${p}`;
+    paths.push(p);
+  }
+  for (const p of paths) {
+    try { await deleteObject(ref(storage, p)); } catch { /* تجاهل */ }
+  }
+  if (item.id) {
+    try { await deleteDoc(doc(db, "users", uid, "devices", deviceId, collectionName, item.id)); } catch { /* تجاهل */ }
+  }
+  return true;
+}
+
+// كاش قصير لبحث الأرقام (توفير قراءات Firestore)
+const lookupCache = new Map();
+
+async function cachedCollection(uid, deviceId, name, max) {
+  const key = `${uid}:${deviceId}:${name}`;
+  const hit = lookupCache.get(key);
+  if (hit && Date.now() - hit.at < 5 * 60 * 1000) return hit.items;
+  try {
+    const snap = await getDocs(query(collection(db, "users", uid, "devices", deviceId, name), limit(max)));
+    const items = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    lookupCache.set(key, { at: Date.now(), items });
+    return items;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * بحث محلي عن رقم (بديل تروكولر): يبحث داخل جهات الاتصال والمكالمات والرسائل
+ * لكل الأجهزة ويجمع الاسم والمصادر وآخر ظهور.
+ */
+export async function searchNumber(uid, deviceIds, rawQuery) {
+  const bare = String(rawQuery || "").replace(/\D/g, "");
+  if (bare.length < 3) return [];
+  const out = new Map();
+  const add = (it, source, deviceId, ts) => {
+    const number = String(it.number || it.phone || it.address || "").trim();
+    const digits = number.replace(/\D/g, "");
+    if (!digits || !digits.includes(bare)) return;
+    const cur = out.get(digits) || {
+      number,
+      digits,
+      name: "",
+      sources: new Set(),
+      deviceId,
+      lastAt: 0,
+    };
+    cur.sources.add(source);
+    const name = String(it.name || it.contactName || it.displayName || "").trim();
+    if (name && name !== number) cur.name = name;
+    const at = toDate(ts)?.getTime() || 0;
+    if (at > cur.lastAt) { cur.lastAt = at; cur.deviceId = deviceId; }
+    out.set(digits, cur);
+  };
+
+  for (const deviceId of deviceIds) {
+    const [contacts, calls, messages] = await Promise.all([
+      cachedCollection(uid, deviceId, "contacts", 800),
+      cachedCollection(uid, deviceId, "calls", 300),
+      cachedCollection(uid, deviceId, "messages", 300),
+    ]);
+    contacts.forEach((it) => add(it, "جهة اتصال", deviceId, null));
+    calls.forEach((it) => add(it, "مكالمة", deviceId, it.timestamp));
+    messages.forEach((it) => add(it, "رسالة", deviceId, it.timestamp));
+  }
+
+  return Array.from(out.values())
+    .map((v) => ({ ...v, sources: Array.from(v.sources) }))
+    .sort((a, b) => (b.name ? 1 : 0) - (a.name ? 1 : 0) || b.lastAt - a.lastAt)
+    .slice(0, 20);
+}
+
 export function createFirestoreProvider() {
   return {
     mode: "firebase",
@@ -232,7 +314,9 @@ export function createFirestoreProvider() {
     sendCommand,
     deleteDevice,
     deleteMediaItem,
+    deleteDocItem,
     getDeviceOnce,
+    searchNumber,
   };
 }
 
@@ -443,6 +527,41 @@ export function createDemoProvider() {
     async getDeviceOnce(uid, deviceId) {
       const d = devices.find((x) => x.id === deviceId);
       return d || null;
+    },
+
+    async deleteDocItem(uid, deviceId, collectionName, item) {
+      const list = data[deviceId]?.[collectionName];
+      if (Array.isArray(list)) {
+        data[deviceId][collectionName] = list.filter((m) => m.id !== item?.id);
+        emitCollection(deviceId, collectionName);
+      }
+      return true;
+    },
+
+    async searchNumber(uid, deviceIds, rawQuery) {
+      const bare = String(rawQuery || "").replace(/\D/g, "");
+      if (bare.length < 3) return [];
+      const out = new Map();
+      for (const deviceId of deviceIds) {
+        const itemsOf = (name) => data[deviceId]?.[name] || [];
+        const add = (it, source) => {
+          const number = String(it.number || "").trim();
+          const digits = number.replace(/\D/g, "");
+          if (!digits.includes(bare)) return;
+          const cur = out.get(digits) || { number, digits, name: "", sources: new Set(), deviceId, lastAt: 0 };
+          cur.sources.add(source);
+          if (it.name) cur.name = it.name;
+          const at = toDate(it.timestamp)?.getTime() || 0;
+          if (at > cur.lastAt) cur.lastAt = at;
+          out.set(digits, cur);
+        };
+        itemsOf("contacts").forEach((it) => add(it, "جهة اتصال"));
+        itemsOf("calls").forEach((it) => add(it, "مكالمة"));
+        itemsOf("messages").forEach((it) => add(it, "رسالة"));
+      }
+      return Array.from(out.values())
+        .map((v) => ({ ...v, sources: Array.from(v.sources) }))
+        .sort((a, b) => (b.name ? 1 : 0) - (a.name ? 1 : 0) || b.lastAt - a.lastAt);
     },
   };
 }

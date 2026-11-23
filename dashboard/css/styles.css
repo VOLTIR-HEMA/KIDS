@@ -469,3 +469,24 @@ button { font-family: inherit; }
 .viewer-media { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 8px; background: #000; }
 .viewer-bar { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
 .danger-text { color: #ff9a9a; }
+
+/* ===== شريط المكالمة الجارية ===== */
+.call-banner { position: fixed; top: 0; left: 0; right: 0; z-index: 210; display: flex; align-items: center; gap: 12px; padding: 10px 18px; background: linear-gradient(90deg, #0f2f3d, #14324f); border-bottom: 2px solid #2ee6a8; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45); cursor: pointer; color: #eafff8; }
+.call-banner.hidden { display: none; }
+.call-banner-icon { font-size: 22px; animation: callPulse 1.4s infinite; }
+.call-banner-body { flex: 1; min-width: 0; }
+.call-banner-title { display: flex; align-items: center; gap: 8px; font-size: 15px; }
+.call-banner-sub { font-size: 12px; color: #a9c7c0; margin-top: 2px; }
+.call-banner-go { font-size: 12px; color: #7fd8bd; white-space: nowrap; }
+.call-live-dot { width: 9px; height: 9px; border-radius: 50%; background: #2ee6a8; box-shadow: 0 0 0 rgba(46, 230, 168, 0.7); animation: callPulse 1.4s infinite; }
+@keyframes callPulse { 0% { opacity: 1; } 50% { opacity: 0.35; } 100% { opacity: 1; } }
+
+/* ===== حالة البث (مباشر/قديم) ===== */
+.live-badge { font-size: 10px; padding: 2px 8px; border-radius: 999px; background: #3a1b22; border: 1px solid #ff6b6b; color: #ffb3b3; }
+.live-badge.hidden { display: none; }
+.live-frame-wrap { position: relative; }
+.live-frame.stale { filter: grayscale(0.5) brightness(0.7); }
+.row-actions { display: flex; align-items: center; gap: 6px; margin-inline-start: 8px; }
+.lookup-card { max-height: 80vh; overflow: auto; }
+.lookup-row { align-items: center; }
+.call-banner:not(.hidden) ~ .app-shell { padding-top: 54px; }

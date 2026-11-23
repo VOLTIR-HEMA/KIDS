@@ -35,8 +35,7 @@ object DeviceInfo {
             ?: return false
         val network = cm.activeNetwork ?: return false
         val caps = cm.getNetworkCapabilities(network) ?: return false
-        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
-            caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
     }
 
     /** نوع الاتصال فقط؛ اسم الشبكة (SSID) يتطلب صلاحيات موقع إضافية في الأندرويد الحديث. */

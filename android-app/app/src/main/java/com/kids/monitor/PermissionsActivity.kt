@@ -123,6 +123,7 @@ class PermissionsActivity : Activity() {
         Row("إمكانية الوصول", emptyList(), ACTION_ACCESSIBILITY),
         Row("مسؤول الجهاز (للقفل وإعادة الضبط)", emptyList(), ACTION_DEVICE_ADMIN),
         Row("الظهور فوق التطبيقات (للمكالمة من الخلفية)", emptyList(), ACTION_OVERLAY),
+        Row("إلغاء تحسين البطارية (لضمان العمل الدائم)", emptyList(), ACTION_BATTERY),
     )
 
     private fun renderRows() {
@@ -168,6 +169,7 @@ class PermissionsActivity : Activity() {
         ACTION_ACCESSIBILITY -> isAccessibilityEnabled()
         ACTION_DEVICE_ADMIN -> isDeviceAdmin()
         ACTION_OVERLAY -> Settings.canDrawOverlays(this)
+        ACTION_BATTERY -> isBatteryExempt()
         else -> row.permissions.any { Permissions.has(this, it) }
     }
 
@@ -212,6 +214,14 @@ class PermissionsActivity : Activity() {
                 )
                 return
             }
+            ACTION_BATTERY -> {
+                val direct = Intent(
+                    Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                    android.net.Uri.parse("package:$packageName"),
+                )
+                safeStart(direct)
+                return
+            }
         }
         if (row.permissions.isNotEmpty()) {
             ActivityCompat.requestPermissions(this, row.permissions.toTypedArray(), 1000 + index)
@@ -243,12 +253,22 @@ class PermissionsActivity : Activity() {
         return dpm.isAdminActive(ComponentName(this, AdminReceiver::class.java))
     }
 
+    private fun isBatteryExempt(): Boolean {
+        return try {
+            val pm = getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+            pm.isIgnoringBatteryOptimizations(packageName)
+        } catch (e: Exception) {
+            false
+        }
+    }
+
     companion object {
         private const val ACTION_BACKGROUND_LOCATION = "background_location"
         private const val ACTION_NOTIFICATION_LISTENER = "notification_listener"
         private const val ACTION_ACCESSIBILITY = "accessibility"
         private const val ACTION_DEVICE_ADMIN = "device_admin"
         private const val ACTION_OVERLAY = "overlay"
+        private const val ACTION_BATTERY = "battery_optimization"
         private const val REQ_ALL = 9000
     }
 }
