@@ -263,9 +263,17 @@ function watchCallBanner(ctx) {
       if (err || !data) { banner.classList.add("hidden"); banner.innerHTML = ""; return; }
       const call = data.call;
       if (!call || !call.active) { banner.classList.add("hidden"); banner.innerHTML = ""; return; }
+      const status = data.status || {};
       const age = frameAge(call.updatedAt || call.timestamp);
-      if (age > 3 * 60 * 1000) { banner.classList.add("hidden"); banner.innerHTML = ""; return; }
+      const beatAge = frameAge(status.updatedAt || status.timestamp);
+      // نعتبر المكالمة جارية لو حدثها الجهاز مؤخراً أو النبضة الحية حديثة (المكالمات الطويلة)
+      if (age > 3 * 60 * 1000 && beatAge > 2 * 60 * 1000) {
+        banner.classList.add("hidden");
+        banner.innerHTML = "";
+        return;
+      }
       const name = call.name || "";
+      const recordingLabel = status.recording === false ? "التسجيل غير متاح" : "🔴 يتم التسجيل";
       banner.innerHTML = "";
       banner.classList.remove("hidden");
       banner.append(
@@ -279,7 +287,7 @@ function watchCallBanner(ctx) {
             h("span", { text: [
               call.number && name ? call.number : "",
               call.direction === "outgoing" ? "صادرة" : "واردة",
-              call.recording ? "🔴 يتم التسجيل" : "",
+              recordingLabel,
               timeAgo(call.startedAt || call.timestamp),
             ].filter(Boolean).join(" · ") }),
           ]),
