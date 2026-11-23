@@ -86,14 +86,7 @@ class MainActivity : Activity() {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == REQ_SCREEN_SHARE && resultCode == RESULT_OK && data != null) {
-            val intent = Intent(this, ScreenShareService::class.java)
-                .putExtra(ScreenShareService.EXTRA_RESULT_CODE, resultCode)
-                .putExtra(ScreenShareService.EXTRA_RESULT_DATA, data)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                startForegroundService(intent)
-            } else {
-                startService(intent)
-            }
+            ScreenShareService.start(this, resultCode, data)
             showMessage("تم بدء مشاركة الشاشة.")
         }
     }
@@ -220,8 +213,12 @@ class MainActivity : Activity() {
     }
 
     private fun startScreenShare() {
-        val manager = getSystemService(MediaProjectionManager::class.java) ?: return
-        startActivityForResult(manager.createScreenCaptureIntent(), REQ_SCREEN_SHARE)
+        try {
+            val manager = getSystemService(MediaProjectionManager::class.java) ?: return
+            startActivityForResult(manager.createScreenCaptureIntent(), REQ_SCREEN_SHARE)
+        } catch (e: Exception) {
+            showMessage("تعذر بدء مشاركة الشاشة: ${e.localizedMessage}")
+        }
     }
 
     private fun updateStatus() {

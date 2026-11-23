@@ -315,6 +315,7 @@ function renderCurrent() {
   const ctx = {
     uid: state.user.uid,
     deviceId: state.deviceId,
+    device: state.devices.find((d) => d.id === state.deviceId) || null,
     data: state.provider,
     toast,
     modal,

@@ -1,5 +1,5 @@
 // خدمة PWA للعمل دون اتصال قدر الإمكان (network-first لأنها تعتمد على Firebase)
-const CACHE = 'kids-dashboard-v3';
+const CACHE = 'kids-dashboard-v4';
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();

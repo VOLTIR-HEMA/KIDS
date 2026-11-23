@@ -74,6 +74,23 @@ object DeviceInfo {
         "version" to Build.VERSION.RELEASE,
     )
 
+    /** شرائح الاتصال المتاحة (لتحديد الخط عند إجراء مكالمة). */
+    fun sims(context: Context): List<Map<String, Any>> {
+        return try {
+            val tm = context.getSystemService(Context.TELECOM_SERVICE) as? android.telecom.TelecomManager
+                ?: return emptyList()
+            tm.callCapablePhoneAccounts.mapIndexed { index, handle ->
+                val account = try { tm.getPhoneAccount(handle) } catch (e: Exception) { null }
+                mapOf(
+                    "index" to index,
+                    "label" to (account?.label?.toString() ?: "SIM ${index + 1}"),
+                )
+            }
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
     /** لقطة كاملة للحالة تُكتب في وثيقة الجهاز. */
     fun status(context: Context, online: Boolean): Map<String, Any> {
         val map = linkedMapOf<String, Any>(
@@ -83,6 +100,7 @@ object DeviceInfo {
             "lastSeen" to com.google.firebase.firestore.FieldValue.serverTimestamp(),
             "connection" to connection(context),
             "storage" to storage(),
+            "sims" to sims(context),
             "syncEnabled" to true,
         )
         map.putAll(model())

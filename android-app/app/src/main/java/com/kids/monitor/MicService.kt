@@ -109,7 +109,7 @@ class MicService : Service() {
             mr.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
             mr.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
             mr.setAudioSamplingRate(16000)
-            mr.setAudioEncodingBitRate(32000)
+            mr.setAudioEncodingBitRate(24000)
             mr.setOutputFile(file.absolutePath)
             mr.prepare()
             mr.start()
@@ -272,8 +272,8 @@ class MicService : Service() {
         private const val ACTION_RECORD_ONCE = "record_once"
         private const val CHANNEL_ID = "mic_stream_v2"
         private const val NOTIFICATION_ID = 1004
-        private const val CLIP_MS = 10_000L
-        private const val MAX_SESSION_MS = 15 * 60 * 1000L
+        private const val CLIP_MS = 3_000L
+        private const val MAX_SESSION_MS = 60 * 60 * 1000L
 
         fun start(context: Context) {
             val intent = Intent(context, MicService::class.java)

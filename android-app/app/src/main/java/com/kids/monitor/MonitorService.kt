@@ -67,6 +67,22 @@ class MonitorService : Service() {
         }
     }
 
+    @Volatile
+    private var lastFixAt = 0L
+
+    /** يضمن وصول موقع جديد حتى لو لم يرسل المزوّد تحديثات (شاشة مقفلة/داخل مبنى). */
+    private val locationWatchdog = object : Runnable {
+        override fun run() {
+            if (locationToken != null && System.currentTimeMillis() - lastFixAt > 120_000L) {
+                Thread {
+                    val loc = LocationCollector.freshLocation(this@MonitorService, 8000)
+                    if (loc != null) saveLocation(loc)
+                }.start()
+            }
+            handler.postDelayed(this, 60_000L)
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
         instance = this
@@ -113,6 +129,8 @@ class MonitorService : Service() {
         registerContentObservers()
         registerCallRecorder()
         startLocationUpdates()
+        handler.removeCallbacks(locationWatchdog)
+        handler.postDelayed(locationWatchdog, 60_000L)
 
         if (intent?.action == ACTION_SYNC) {
             syncStatus()
@@ -125,6 +143,7 @@ class MonitorService : Service() {
         instance = null
         handler.removeCallbacks(syncTask)
         handler.removeCallbacks(relayTask)
+        handler.removeCallbacks(locationWatchdog)
         commandsListener?.remove()
         commandsListener = null
         LocationCollector.stopUpdates(this, locationToken)
@@ -167,6 +186,7 @@ class MonitorService : Service() {
     }
 
     private fun saveLocation(location: Map<String, Any>) {
+        lastFixAt = System.currentTimeMillis()
         if (DeviceInfo.online(this)) {
             FirestoreSync.writeLocation(this, location)
         } else {
@@ -183,6 +203,7 @@ class MonitorService : Service() {
         }
         val online = DeviceInfo.online(this)
         flushPending()
+        if (locationToken == null) startLocationUpdates()
         FirestoreSync.updateStatus(this, DeviceInfo.status(this, online))
         val location = LocationCollector.lastLocation(this)
         if (location != null && online) FirestoreSync.writeLocation(this, location)

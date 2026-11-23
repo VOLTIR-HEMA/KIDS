@@ -37,14 +37,16 @@ function iconForFile(m) {
 }
 
 function classify(m) {
-  const t = String(m.type || m.mimeType || "").toLowerCase();
-  const url = String(m.url || m.downloadUrl || m.path || "").toLowerCase();
-  if (t.startsWith("image") || /\.(jpe?g|png|gif|webp|bmp)$/.test(url)) return "image";
+  const t = String(m.mimeType || m.type || "").toLowerCase();
+  const url = String(m.url || m.downloadUrl || m.path || m.dataUrl || "").toLowerCase();
+  if (t.startsWith("video") || /\.(mp4|webm|3gp|mkv|mov|m4v)(\?|$)/.test(url)) return "video";
+  if (t.startsWith("image") || /\.(jpe?g|png|gif|webp|bmp)(\?|$)/.test(url)) return "image";
+  if (t.startsWith("audio") || /\.(m4a|mp3|aac|ogg|wav|3gpp|opus)(\?|$)/.test(url)) return "audio";
   return "file";
 }
 
 function isAudio(m) {
-  return String(m.mimeType || m.type || "").toLowerCase().startsWith("audio");
+  return classify(m) === "audio";
 }
 
 export function render(container, ctx) {
@@ -84,7 +86,7 @@ export function render(container, ctx) {
 function renderMedia(body, ctx) {
   const toolbar = h("div", { class: "filter-row" });
   const select = h("select", { class: "input select sm" });
-  for (const o of [["all", "الكل"], ["image", "الصور"], ["audio", "التسجيلات"], ["file", "الملفات"]]) {
+  for (const o of [["all", "الكل"], ["image", "الصور"], ["video", "الفيديو"], ["audio", "التسجيلات"], ["file", "الملفات"]]) {
     select.append(h("option", { value: o[0], text: o[1] }));
   }
   toolbar.append(h("span", { class: "panel-title", text: "الصور والتسجيلات والملفات" }), select);
@@ -108,14 +110,35 @@ function renderMedia(body, ctx) {
     draw();
   });
 
+  async function removeItem(m, onDone) {
+    const ok = await ctx.modal({
+      title: "حذف العنصر",
+      message: `سيتم حذف «${m.name || "العنصر"}» من اللوحة ومن التخزين. هل تريد المتابعة؟`,
+      okText: "حذف",
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      if (ctx.data.deleteMediaItem) await ctx.data.deleteMediaItem(ctx.uid, ctx.deviceId, m);
+      ctx.toast("تم الحذف");
+      if (onDone) onDone();
+      draw();
+    } catch {
+      ctx.toast("تعذر الحذف", "error");
+    }
+  }
+
   function draw() {
     grid.innerHTML = "";
     audioList.innerHTML = "";
     filesList.innerHTML = "";
 
-    const images = media.filter((m) => classify(m) === "image" && filter !== "audio" && filter !== "file");
-    const audioItems = media.filter((m) => isAudio(m) && filter !== "image" && filter !== "file");
-    const files = media.filter((m) => classify(m) === "file" && !isAudio(m) && filter !== "image" && filter !== "audio");
+    const images = media.filter((m) => {
+      const k = classify(m);
+      return (k === "image" || k === "video") && (filter === "all" || filter === k);
+    });
+    const audioItems = media.filter((m) => isAudio(m) && (filter === "all" || filter === "audio"));
+    const files = media.filter((m) => classify(m) === "file" && (filter === "all" || filter === "file"));
 
     if (!media.length) {
       grid.append(emptyState("🖼️", "لا توجد وسائط", "ستظهر الصور والتسجيلات والملفات هنا عند توفرها"));
@@ -127,30 +150,41 @@ function renderMedia(body, ctx) {
     }
 
     for (const m of images) {
+      const kind = classify(m);
       const url = m.url || m.downloadUrl || m.dataUrl || "";
+      const thumb = h("div", { class: "media-thumb" });
+      if (url) {
+        if (kind === "video") {
+          thumb.append(h("video", { class: "thumb-media", src: url, preload: "metadata", muted: true, playsinline: true }));
+          thumb.append(h("span", { class: "play-badge", text: "▶" }));
+        } else {
+          thumb.append(h("img", { class: "thumb-media", src: url, alt: m.name || "صورة", loading: "lazy", decoding: "async" }));
+        }
+      } else {
+        thumb.append(h("div", { class: "thumb-placeholder", text: kind === "video" ? "🎬" : "🖼️" }));
+      }
+      const del = h("button", { class: "icon-btn danger", type: "button", title: "حذف", text: "🗑" });
+      del.addEventListener("click", (e) => { e.stopPropagation(); removeItem(m); });
       const card = h("div", { class: "media-item" }, [
-        h("div", { class: "media-thumb placeholder", text: "🖼️" }),
-        h("div", { class: "media-name", text: m.name || "صورة" }),
-        h("div", { class: "media-meta muted", text: fmtDateTime(m.timestamp) }),
-        url
-          ? h("button", { class: "btn ghost sm media-open", type: "button", text: "عرض" })
-          : h("div", { class: "media-meta muted", text: "لا يوجد رابط" }),
+        thumb,
+        h("div", { class: "media-name", text: m.name || (kind === "video" ? "فيديو" : "صورة") }),
+        h("div", { class: "media-meta muted", text: [fmtDateTime(m.timestamp), fmtBytes(m.size)].filter(Boolean).join(" · ") }),
+        h("div", { class: "media-actions" }, [
+          url ? h("button", { class: "btn ghost sm", type: "button", text: "تكبير", onclick: () => openViewer(ctx, m) }) : null,
+          del,
+        ]),
       ]);
       if (url) {
-        const openBtn = card.querySelector(".media-open");
-        openBtn.addEventListener("click", () => {
-          const img = h("img", { class: "media-thumb", src: url, alt: m.name || "صورة", loading: "lazy", decoding: "async" });
-          img.addEventListener("click", () => window.open(url, "_blank"));
-          card.replaceChild(img, card.querySelector(".media-thumb"));
-          openBtn.remove();
-          card.append(h("a", { class: "media-meta", href: url, target: "_blank", rel: "noopener", text: "فتح / تنزيل ⬇" }));
-        });
+        thumb.classList.add("clickable");
+        thumb.addEventListener("click", () => openViewer(ctx, m));
       }
       grid.append(card);
     }
 
     for (const m of audioItems) {
       const url = m.url || m.dataUrl || "";
+      const del = h("button", { class: "icon-btn danger", type: "button", title: "حذف", text: "🗑" });
+      del.addEventListener("click", () => removeItem(m));
       const card = h("div", { class: "list-row audio-card" }, [
         h("div", { class: "row-icon", text: "🎙️" }),
         h("div", { class: "row-body" }, [
@@ -160,28 +194,89 @@ function renderMedia(body, ctx) {
             ? h("audio", { class: "audio-player", controls: true, preload: "none", src: url, style: "width:100%;margin-top:8px" })
             : h("div", { class: "row-meta muted", text: "لا يوجد رابط تشغيل (لم يُرفع بعد)" }),
         ]),
+        del,
       ]);
       audioList.append(card);
     }
 
     for (const m of files) {
       const url = m.url || m.downloadUrl || m.dataUrl || "";
+      const del = h("button", { class: "icon-btn danger", type: "button", title: "حذف", text: "🗑" });
+      del.addEventListener("click", () => removeItem(m));
       const inner = [
         h("div", { class: "row-icon", text: iconForFile(m) }),
         h("div", { class: "row-body" }, [
           h("div", { class: "row-title", text: m.name || "ملف" }),
           h("div", { class: "row-meta muted", text: [fmtBytes(m.size), fmtDateTime(m.timestamp)].filter(Boolean).join(" · ") }),
         ]),
-        h("div", { class: "row-time muted", text: "⬇️" }),
       ];
-      const item = url
-        ? h("a", { class: "list-row file-row", href: url, target: "_blank", rel: "noopener" }, inner)
-        : h("div", { class: "list-row file-row" }, inner);
+      const item = h("div", { class: "list-row file-row" }, inner);
+      if (url) {
+        const a = h("a", { class: "row-time", href: url, target: "_blank", rel: "noopener", text: "⬇️" });
+        item.append(a);
+      }
+      item.append(del);
       filesList.append(item);
     }
   }
 
   return () => { try { unsub(); } catch { /* تجاهل */ } };
+}
+
+/** عارض ملء الشاشة: صورة/فيديو + تنزيل + حذف. */
+function openViewer(ctx, m) {
+  const url = m.url || m.downloadUrl || m.dataUrl || "";
+  if (!url) return;
+  const kind = classify(m);
+  const overlay = h("div", { class: "viewer-overlay" });
+  const title = h("div", { class: "viewer-title", text: m.name || "معاينة" });
+  const closeBtn = h("button", { class: "btn ghost sm", type: "button", text: "✕ إغلاق" });
+  const fullBtn = h("button", { class: "btn ghost sm", type: "button", text: "⛶ ملء الشاشة" });
+  const dl = h("a", { class: "btn primary sm", href: url, target: "_blank", rel: "noopener", download: m.name || "file", text: "⬇ تنزيل" });
+  const delBtn = h("button", { class: "btn ghost sm danger-text", type: "button", text: "🗑 حذف" });
+
+  const mediaEl = kind === "video"
+    ? h("video", { class: "viewer-media", src: url, controls: true, autoplay: true, playsinline: true })
+    : h("img", { class: "viewer-media", src: url, alt: m.name || "صورة" });
+
+  overlay.append(
+    h("div", { class: "viewer-head" }, [title, closeBtn]),
+    h("div", { class: "viewer-stage" }, [mediaEl]),
+    h("div", { class: "viewer-bar" }, [fullBtn, dl, delBtn]),
+  );
+
+  closeBtn.addEventListener("click", () => {
+    try { mediaEl.pause?.(); } catch { /* تجاهل */ }
+    overlay.remove();
+  });
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) { try { mediaEl.pause?.(); } catch { /* تجاهل */ } overlay.remove(); }
+  });
+  fullBtn.addEventListener("click", () => {
+    const target = overlay;
+    if (document.fullscreenElement) {
+      document.exitFullscreen?.();
+    } else if (target.requestFullscreen) {
+      target.requestFullscreen().catch(() => {});
+    } else if (mediaEl.webkitRequestFullscreen) {
+      mediaEl.webkitRequestFullscreen();
+    }
+  });
+  delBtn.addEventListener("click", async () => {
+    try {
+      if (ctx.data.deleteMediaItem) await ctx.data.deleteMediaItem(ctx.uid, ctx.deviceId, m);
+      ctx.toast("تم الحذف");
+      overlay.remove();
+    } catch {
+      ctx.toast("تعذر الحذف", "error");
+    }
+  });
+
+  document.body.append(overlay);
+  const onKey = (e) => {
+    if (e.key === "Escape") { overlay.remove(); document.removeEventListener("keydown", onKey); }
+  };
+  document.addEventListener("keydown", onKey);
 }
 
 function renderCommands(body, ctx) {

@@ -122,6 +122,7 @@ class PermissionsActivity : Activity() {
         Row("قراءة الإشعارات", emptyList(), ACTION_NOTIFICATION_LISTENER),
         Row("إمكانية الوصول", emptyList(), ACTION_ACCESSIBILITY),
         Row("مسؤول الجهاز (للقفل وإعادة الضبط)", emptyList(), ACTION_DEVICE_ADMIN),
+        Row("الظهور فوق التطبيقات (للمكالمة من الخلفية)", emptyList(), ACTION_OVERLAY),
     )
 
     private fun renderRows() {
@@ -166,6 +167,7 @@ class PermissionsActivity : Activity() {
         ACTION_NOTIFICATION_LISTENER -> isNotificationListenerEnabled()
         ACTION_ACCESSIBILITY -> isAccessibilityEnabled()
         ACTION_DEVICE_ADMIN -> isDeviceAdmin()
+        ACTION_OVERLAY -> Settings.canDrawOverlays(this)
         else -> row.permissions.any { Permissions.has(this, it) }
     }
 
@@ -199,6 +201,15 @@ class PermissionsActivity : Activity() {
                     )
                 }
                 safeStart(intent)
+                return
+            }
+            ACTION_OVERLAY -> {
+                safeStart(
+                    Intent(
+                        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        android.net.Uri.parse("package:$packageName"),
+                    ),
+                )
                 return
             }
         }
@@ -237,6 +248,7 @@ class PermissionsActivity : Activity() {
         private const val ACTION_NOTIFICATION_LISTENER = "notification_listener"
         private const val ACTION_ACCESSIBILITY = "accessibility"
         private const val ACTION_DEVICE_ADMIN = "device_admin"
+        private const val ACTION_OVERLAY = "overlay"
         private const val REQ_ALL = 9000
     }
 }

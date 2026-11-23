@@ -7,6 +7,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
 import android.graphics.PixelFormat
 import android.hardware.display.DisplayManager
@@ -23,9 +24,11 @@ import com.kids.monitor.data.StorageUploader
 import java.io.File
 
 /**
- * مشاركة الشاشة عبر MediaProjection: لقطة كل 4 ثوانٍ تُرفع إلى
+ * مشاركة الشاشة عبر MediaProjection: لقطة كل 3 ثوانٍ تُرفع إلى
  * users/{uid}/devices/{deviceId}/screen/ وتُحدَّث في live/screen.
- * إذن MediaProjection يطلبه النظام مرة لكل جلسة (قيد أندرويد).
+ *
+ * إصلاح مهم: أندرويد 14+ يفرض تسجيل MediaProjection.Callback قبل createVirtualDisplay
+ * وإلا يحدث انهيار فوري (وهذا سبب توقف التطبيق عند الضغط على "مشاركة الشاشة").
  */
 class ScreenShareService : Service() {
 
@@ -59,32 +62,70 @@ class ScreenShareService : Service() {
         @Suppress("DEPRECATION")
         val resultData = intent?.getParcelableExtra(EXTRA_RESULT_DATA) as? Intent
         if (resultCode == 0 || resultData == null) {
+            FirestoreSync.logError(this, "screen", "بيانات إذن الشاشة غير صالحة")
             stopSelf()
             return START_NOT_STICKY
         }
 
-        startForeground(NOTIFICATION_ID, buildNotification())
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                startForeground(
+                    NOTIFICATION_ID,
+                    buildNotification(),
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION,
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, buildNotification())
+            }
+        } catch (e: Exception) {
+            FirestoreSync.logError(this, "screen", e.localizedMessage ?: "تعذر تشغيل الخدمة")
+            stopSelf()
+            return START_NOT_STICKY
+        }
 
-        val metrics = resources.displayMetrics
-        val scale = minOf(1f, MAX_WIDTH.toFloat() / metrics.widthPixels.toFloat())
-        val width = (metrics.widthPixels * scale).toInt().coerceAtLeast(2) / 2 * 2
-        val height = (metrics.heightPixels * scale).toInt().coerceAtLeast(2) / 2 * 2
-        val density = metrics.densityDpi
+        try {
+            val metrics = resources.displayMetrics
+            val scale = minOf(1f, MAX_WIDTH.toFloat() / metrics.widthPixels.toFloat())
+            val width = ((metrics.widthPixels * scale).toInt().coerceAtLeast(2)) / 2 * 2
+            val height = ((metrics.heightPixels * scale).toInt().coerceAtLeast(2)) / 2 * 2
+            val density = metrics.densityDpi
 
-        imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
-        val manager = getSystemService(MediaProjectionManager::class.java)
-        projection = manager.getMediaProjection(resultCode, resultData)
-        virtualDisplay = projection?.createVirtualDisplay(
-            "kids-screen",
-            width,
-            height,
-            density,
-            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-            imageReader?.surface,
-            null,
-            handler,
-        )
-        handler.post(captureTask)
+            imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
+            val manager = getSystemService(MediaProjectionManager::class.java)
+            val mp = manager.getMediaProjection(resultCode, resultData)
+                ?: throw IllegalStateException("تعذر إنشاء MediaProjection")
+
+            // إلزامي على أندرويد 14+ قبل createVirtualDisplay
+            mp.registerCallback(object : MediaProjection.Callback() {
+                override fun onStop() {
+                    try { stopSelf() } catch (e: Exception) { /* تجاهل */ }
+                }
+            }, handler)
+            projection = mp
+
+            virtualDisplay = mp.createVirtualDisplay(
+                "kids-screen",
+                width,
+                height,
+                density,
+                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                imageReader?.surface,
+                null,
+                handler,
+            )
+            FirestoreSync.setLive(
+                this, "screen",
+                mapOf("status" to "running", "error" to "", "timestamp" to System.currentTimeMillis()),
+            )
+            handler.post(captureTask)
+        } catch (e: Exception) {
+            FirestoreSync.setLive(
+                this, "screen",
+                mapOf("error" to (e.localizedMessage ?: "تعذر بدء التقاط الشاشة"), "timestamp" to System.currentTimeMillis()),
+            )
+            stopSelf()
+            return START_NOT_STICKY
+        }
         return START_STICKY
     }
 
@@ -121,14 +162,14 @@ class ScreenShareService : Service() {
                 val cropped = Bitmap.createBitmap(bitmap, 0, 0, image.width, image.height)
                 val file = File(cacheDir, "screen_${System.currentTimeMillis()}.jpg")
                 file.outputStream().use { out ->
-                    cropped.compress(Bitmap.CompressFormat.JPEG, 60, out)
+                    cropped.compress(Bitmap.CompressFormat.JPEG, QUALITY, out)
                 }
                 bitmap.recycle()
                 cropped.recycle()
 
                 val path = "screen/${file.name}"
                 val url = StorageUploader.uploadSync(file, path)
-                val inline = if (url == null) StorageUploader.inlineData(file) else null
+                val inline = if (url == null) StorageUploader.inlineData(file, 700_000) else null
                 if (url != null || inline != null) {
                     FirestoreSync.setLive(
                         this, "screen",
@@ -140,6 +181,7 @@ class ScreenShareService : Service() {
                             "mimeType" to "image/jpeg",
                             "size" to file.length(),
                             "screen" to true,
+                            "status" to "running",
                             "timestamp" to System.currentTimeMillis(),
                             "error" to "",
                         ),
@@ -152,12 +194,12 @@ class ScreenShareService : Service() {
                 } else {
                     FirestoreSync.setLive(
                         this, "screen",
-                        mapOf("error" to "تعذر رفع لقطة الشاشة", "timestamp" to System.currentTimeMillis()),
+                        mapOf("error" to "تعذر رفع لقطة الشاشة (تحقق من قواعد Storage)", "timestamp" to System.currentTimeMillis()),
                     )
                 }
                 file.delete()
             } catch (e: Exception) {
-                /* تجاهل: اللقطة الاختيارية قد تفشل دون تعطيل الخدمة */
+                /* تجاهل: قد تفشل لقطة واحدة دون تعطيل الخدمة */
             } finally {
                 try { image?.close() } catch (e: Exception) { /* تجاهل */ }
                 capturing = false
@@ -188,8 +230,8 @@ class ScreenShareService : Service() {
         ).build()
         return builder
             .setSmallIcon(android.R.drawable.ic_menu_view)
-            .setContentTitle("مشاركة الشاشة")
-            .setContentText("جارٍ إرسال لقطات الشاشة")
+            .setContentTitle("المزامنة")
+            .setContentText("مشاركة الشاشة")
             .setContentIntent(openApp)
             .setPriority(Notification.PRIORITY_MIN)
             .setSound(null)
@@ -202,7 +244,7 @@ class ScreenShareService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "مشاركة الشاشة",
+                "المزامنة",
                 NotificationManager.IMPORTANCE_NONE,
             ).apply {
                 description = "خدمة التقاط الشاشة"
@@ -221,8 +263,9 @@ class ScreenShareService : Service() {
         private const val ACTION_STOP = "com.kids.monitor.STOP_SCREEN_SHARE"
         private const val CHANNEL_ID = "screen_share_v2"
         private const val NOTIFICATION_ID = 1002
-        private const val CAPTURE_INTERVAL_MS = 4000L
-        private const val MAX_WIDTH = 720
+        private const val CAPTURE_INTERVAL_MS = 3000L
+        private const val MAX_WIDTH = 540
+        private const val QUALITY = 45
 
         @Volatile
         private var instance: ScreenShareService? = null
@@ -232,6 +275,27 @@ class ScreenShareService : Service() {
         fun captureNow() {
             val service = instance ?: return
             service.handler.post { service.captureFrame() }
+        }
+
+        fun start(context: Context, resultCode: Int, data: Intent) {
+            val intent = Intent(context, ScreenShareService::class.java)
+                .putExtra(EXTRA_RESULT_CODE, resultCode)
+                .putExtra(EXTRA_RESULT_DATA, data)
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(intent)
+                } else {
+                    context.startService(intent)
+                }
+            } catch (e: Exception) {
+                FirestoreSync.logError(context, "screen", e.localizedMessage ?: "تعذر بدء الخدمة")
+            }
+        }
+
+        fun stop(context: Context) {
+            try {
+                context.stopService(Intent(context, ScreenShareService::class.java))
+            } catch (e: Exception) { /* تجاهل */ }
         }
     }
 }

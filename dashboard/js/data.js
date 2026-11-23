@@ -3,7 +3,8 @@ import {
   collection, doc, getDoc, getDocs, onSnapshot,
   addDoc, deleteDoc, limit, serverTimestamp, where, query,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { db } from "./firebase.js";
+import { deleteObject, ref } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
+import { db, storage } from "./firebase.js";
 import { toDate } from "./util.js";
 
 // المسار المتوقع للبيانات:
@@ -190,6 +191,36 @@ export async function deleteDevice(uid, deviceId) {
   try { await deleteDoc(doc(db, "users", uid, "devices", deviceId)); } catch { /* تجاهل */ }
 }
 
+/** حذف عنصر وسائط: وثيقة Firestore + الملف من Storage. */
+export async function deleteMediaItem(uid, deviceId, item) {
+  if (!item) return false;
+  const paths = [];
+  if (item.thumbPath) {
+    let p = String(item.thumbPath).replace(/^\/+/, "");
+    if (!p.startsWith("users/")) p = `users/${uid}/devices/${deviceId}/${p}`;
+    paths.push(p);
+  }
+  const m = /\/o\/([^?]+)/.exec(String(item.url || ""));
+  if (m) paths.push(decodeURIComponent(m[1]));
+  for (const p of paths) {
+    try { await deleteObject(ref(storage, p)); } catch { /* تجاهل */ }
+  }
+  if (item.id) {
+    try { await deleteDoc(doc(db, "users", uid, "devices", deviceId, "media", item.id)); } catch { /* تجاهل */ }
+  }
+  return true;
+}
+
+/** قراءة وثيقة الجهاز مرة واحدة (لشرائح الاتصال مثلاً). */
+export async function getDeviceOnce(uid, deviceId) {
+  try {
+    const snap = await getDoc(doc(db, "users", uid, "devices", deviceId));
+    return snap.exists() ? normalizeDevice(snap.id, snap.data()) : null;
+  } catch (e) {
+    return null;
+  }
+}
+
 export function createFirestoreProvider() {
   return {
     mode: "firebase",
@@ -200,6 +231,8 @@ export function createFirestoreProvider() {
     watchCommand,
     sendCommand,
     deleteDevice,
+    deleteMediaItem,
+    getDeviceOnce,
   };
 }
 
@@ -397,6 +430,19 @@ export function createDemoProvider() {
       const i = devices.findIndex((d) => d.id === deviceId);
       if (i >= 0) devices.splice(i, 1);
       return true;
+    },
+
+    async deleteMediaItem(uid, deviceId, item) {
+      if (data[deviceId]?.media) {
+        data[deviceId].media = data[deviceId].media.filter((m) => m.id !== item?.id);
+        emitCollection(deviceId, "media");
+      }
+      return true;
+    },
+
+    async getDeviceOnce(uid, deviceId) {
+      const d = devices.find((x) => x.id === deviceId);
+      return d || null;
     },
   };
 }

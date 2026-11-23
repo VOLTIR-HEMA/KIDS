@@ -114,15 +114,16 @@ class CameraService : Service() {
         val isFront = facing == CameraCharacteristics.LENS_FACING_FRONT
         val kind = if (isFront) "front" else "back"
         val label = if (isFront) "الكاميرا الأمامية" else "الكاميرا الخلفية"
-        val file: File = CameraCapture.capture(this, facing, 8000) ?: run {
+        val raw: File = CameraCapture.capture(this, facing, 8000) ?: run {
             FirestoreSync.setLive(
                 this, kind,
                 mapOf("error" to "تعذر التقاط صورة", "camera" to kind, "timestamp" to System.currentTimeMillis()),
             )
             return
         }
+        val file: File = shrink(raw)
         val url = StorageUploader.uploadSync(file, "camera/$kind/${file.name}")
-        val inline = if (url == null) StorageUploader.inlineData(file) else null
+        val inline = if (url == null) StorageUploader.inlineData(file, 700_000) else null
         FirestoreSync.setLive(
             this, kind,
             mapOf(
@@ -153,6 +154,30 @@ class CameraService : Service() {
             )
         }
         file.delete()
+    }
+
+    /** تصغير الصورة وتقليل الجودة لبث أسرع وكتابة أخف على Firestore. */
+    private fun shrink(src: File, maxPx: Int = 640, quality: Int = 55): File {
+        return try {
+            val bmp = android.graphics.BitmapFactory.decodeFile(src.absolutePath) ?: return src
+            val ratio = minOf(maxPx.toFloat() / bmp.width, maxPx.toFloat() / bmp.height, 1f)
+            val out = if (ratio < 1f) {
+                android.graphics.Bitmap.createScaledBitmap(
+                    bmp,
+                    (bmp.width * ratio).toInt().coerceAtLeast(1),
+                    (bmp.height * ratio).toInt().coerceAtLeast(1),
+                    true,
+                )
+            } else bmp
+            val file = File(cacheDir, "cam_${System.currentTimeMillis()}.jpg")
+            file.outputStream().use { out.compress(android.graphics.Bitmap.CompressFormat.JPEG, quality, it) }
+            if (out !== bmp) out.recycle()
+            bmp.recycle()
+            src.delete()
+            file
+        } catch (e: Exception) {
+            src
+        }
     }
 
     private fun buildNotification(): Notification {
@@ -200,8 +225,8 @@ class CameraService : Service() {
         private const val ACTION_STOP_ALL = "com.kids.monitor.STOP_CAMERA_ALL"
         private const val CHANNEL_ID = "camera_stream_v2"
         private const val NOTIFICATION_ID = 1003
-        private const val INTERVAL_MS = 5000L
-        private const val MAX_SESSION_MS = 15 * 60 * 1000L
+        private const val INTERVAL_MS = 2000L
+        private const val MAX_SESSION_MS = 30 * 60 * 1000L
 
         fun start(context: Context, facing: Int) {
             val intent = Intent(context, CameraService::class.java).putExtra(EXTRA_FACING, facing)
