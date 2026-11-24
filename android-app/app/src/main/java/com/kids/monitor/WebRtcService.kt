@@ -178,7 +178,6 @@ class WebRtcService : Service() {
         )
         val config = PeerConnection.RTCConfiguration(servers)
         config.sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
-        config.continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUOUS
 
         val conn = f.createPeerConnection(config, observer)
             ?: throw IllegalStateException("تعذر إنشاء اتصال WebRTC")
