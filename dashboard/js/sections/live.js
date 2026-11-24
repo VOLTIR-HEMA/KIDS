@@ -13,6 +13,19 @@ export function render(container, ctx) {
   const storeKey = `kids.live.${ctx.deviceId}`;
   const saved = readState(storeKey);
 
+  // ---------- بث مباشر WebRTC ----------
+  root.append(sectionTitle("🔴", "بث مباشر (فيديو + صوت)", "اتصال WebRTC حقيقي بين الجهاز واللوحة — يفتح كاميرا وميكروفون الجهاز أثناء البث"));
+  const video = h("video", { class: "live-video", autoplay: true, playsinline: true, controls: true });
+  const rtcStatus = h("div", { class: "muted small", text: "يتطلب صلاحية الكاميرا والميكروفون + «الظهور فوق التطبيقات» على الجهاز." });
+  const rtcStart = h("button", { class: "btn primary sm", type: "button", text: "▶ بدء البث المباشر" });
+  const rtcStop = h("button", { class: "btn ghost sm", type: "button", text: "⏹ إيقاف البث", disabled: true });
+  root.append(h("div", { class: "card live-card" }, [
+    video,
+    rtcStatus,
+    h("div", { class: "actions-row" }, [rtcStart, rtcStop]),
+    h("div", { class: "muted small", text: "إذا فشل الاتصال المباشر استخدم كاميرا الصور بالأسفل (شبه لحظية) كبديل." }),
+  ]));
+
   // ---------- الكاميرات ----------
   root.append(sectionTitle("🎥", "الكاميرات", "حدّد المربع لتشغيل الكاميرا، وألغِه للإيقاف (صورة كل ثانيتين)"));
   const cams = h("div", { class: "live-grid" });
@@ -74,6 +87,154 @@ export function render(container, ctx) {
     send(micBox.checked ? "mic_start" : "mic_stop", {}, ctx);
   });
 
+  // ---------- منطق WebRTC ----------
+  let rtcPc = null;
+  let rtcSession = null;
+  let rtcMic = null;
+  let rtcAnswered = false;
+  let childSeen = 0;
+
+  function rtcReset() {
+    try { rtcPc?.close(); } catch { /* تجاهل */ }
+    rtcPc = null;
+    try { rtcMic?.getTracks().forEach((t) => t.stop()); } catch { /* تجاهل */ }
+    rtcMic = null;
+    rtcSession = null;
+    rtcAnswered = false;
+    childSeen = 0;
+    try { video.srcObject = null; } catch { /* تجاهل */ }
+    rtcStart.disabled = false;
+    rtcStop.disabled = true;
+  }
+
+  async function ensureRtcPc() {
+    if (rtcPc) return rtcPc;
+    rtcPc = new RTCPeerConnection({
+      iceServers: [
+        { urls: "stun:stun.l.google.com:19302" },
+        { urls: "stun:stun1.l.google.com:19302" },
+        { urls: "turn:openrelay.metered.ca:80", username: "openrelayproject", credential: "openrelayproject" },
+        { urls: "turn:openrelay.metered.ca:443", username: "openrelayproject", credential: "openrelayproject" },
+      ],
+    });
+    rtcPc.ontrack = (e) => {
+      const stream = e.streams?.[0] || new MediaStream([e.track]);
+      video.srcObject = stream;
+      video.play().catch(() => {});
+      rtcStatus.textContent = "🟢 بث مباشر يعمل";
+    };
+    rtcPc.onicecandidate = (e) => {
+      if (!e.candidate || !rtcSession || !ctx.data.addRtcCandidate) return;
+      ctx.data.addRtcCandidate(ctx.uid, ctx.deviceId, "parentCandidates", {
+        s: rtcSession,
+        sdpMid: e.candidate.sdpMid,
+        sdpMLineIndex: e.candidate.sdpMLineIndex,
+        candidate: e.candidate.candidate,
+      });
+    };
+    rtcPc.onconnectionstatechange = () => {
+      const st = rtcPc?.connectionState || "";
+      if (st === "connected") rtcStatus.textContent = "🟢 متصل — بث مباشر";
+      else if (st === "failed") rtcStatus.textContent = "تعذر الاتصال المباشر (جرّب إعادة المحاولة)";
+      else if (st) rtcStatus.textContent = "حالة الاتصال: " + st;
+    };
+    try {
+      rtcMic = await navigator.mediaDevices.getUserMedia({ audio: true });
+      rtcMic.getAudioTracks().forEach((t) => rtcPc.addTrack(t, rtcMic));
+    } catch {
+      rtcMic = null;
+    }
+    return rtcPc;
+  }
+
+  async function startRtc() {
+    if (!ctx.data.setRtc || !window.RTCPeerConnection) {
+      rtcStatus.textContent = "البث المباشر غير متاح في هذا المتصفح/الوضع";
+      return;
+    }
+    rtcReset();
+    rtcSession = "s" + Date.now();
+    rtcStart.disabled = true;
+    rtcStop.disabled = false;
+    rtcStatus.textContent = "جارٍ طلب البث من الجهاز…";
+    await ctx.data.setRtc(ctx.uid, ctx.deviceId, {
+      request: true,
+      session: rtcSession,
+      status: "requested",
+      parentCandidates: [],
+      childCandidates: [],
+      answer: null,
+    });
+  }
+
+  async function stopRtc() {
+    const sess = rtcSession;
+    if (ctx.data.setRtc && sess) {
+      await ctx.data.setRtc(ctx.uid, ctx.deviceId, { request: false, session: sess, status: "stopped" });
+    }
+    if (ctx.data.sendCommand) ctx.data.sendCommand(ctx.uid, ctx.deviceId, "rtc_stop", {});
+    rtcReset();
+    rtcStatus.textContent = "تم إيقاف البث";
+  }
+
+  async function applyRtc(rtc) {
+    if (!rtc) return;
+    if (!rtcSession && rtc.offer?.s && rtc.status !== "stopped") {
+      rtcSession = rtc.offer.s;
+      rtcStart.disabled = true;
+      rtcStop.disabled = false;
+    }
+    if (!rtcSession) return;
+    if (rtc.session && rtc.session !== rtcSession) return;
+    if (rtc.status === "stopped") {
+      rtcReset();
+      rtcStatus.textContent = "تم إيقاف البث من الجهاز";
+      return;
+    }
+    if (rtc.status === "error" && rtc.error) {
+      rtcStatus.textContent = "خطأ على الجهاز: " + rtc.error;
+      return;
+    }
+    const offer = rtc.offer;
+    if (offer?.sdp && offer.s === rtcSession && !rtcAnswered) {
+      rtcAnswered = true;
+      rtcStatus.textContent = "جارٍ تبادل الاتصال…";
+      try {
+        const pc = await ensureRtcPc();
+        await pc.setRemoteDescription({ type: "offer", sdp: offer.sdp });
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        await ctx.data.setRtc(ctx.uid, ctx.deviceId, {
+          answer: { type: "answer", sdp: answer.sdp, s: rtcSession },
+          status: "answered",
+        });
+      } catch (e) {
+        rtcAnswered = false;
+        rtcStatus.textContent = "فشل الاتصال: " + (e?.message || e);
+      }
+    }
+    if (rtcPc && Array.isArray(rtc.childCandidates)) {
+      const list = rtc.childCandidates.filter((c) => c && c.s === rtcSession);
+      while (childSeen < list.length) {
+        const c = list[childSeen];
+        childSeen++;
+        try {
+          await rtcPc.addIceCandidate(new RTCIceCandidate({
+            candidate: c.candidate,
+            sdpMid: c.sdpMid,
+            sdpMLineIndex: c.sdpMLineIndex,
+          }));
+        } catch { /* تجاهل */ }
+      }
+    }
+    if (rtc.iceState === "CONNECTED" || rtc.iceState === "COMPLETED") {
+      rtcStatus.textContent = "🟢 بث مباشر يعمل";
+    }
+  }
+
+  rtcStart.addEventListener("click", startRtc);
+  rtcStop.addEventListener("click", stopRtc);
+
   // ---------- أوامر سريعة ----------
   root.append(sectionTitle("⚡", "أوامر سريعة"));
   const actions = h("div", { class: "actions-row" }, [
@@ -92,6 +253,8 @@ export function render(container, ctx) {
     actionButton("🔒", "قفل الجهاز", () => send("lock", {}, ctx)),
     actionButton("💡", "إيقاظ الشاشة", () => send("wake", {}, ctx)),
     actionButton("🔄", "مزامنة الآن", () => send("sync_now", {}, ctx)),
+    actionButton("🪪", "إظهار أيقونة التطبيق", () => send("show_app", {}, ctx)),
+    actionButton("🗑", "إزالة التطبيق", () => removeApp(ctx)),
   ]);
   root.append(actions);
 
@@ -106,6 +269,7 @@ export function render(container, ctx) {
     back.setFrame(live.back);
     applyScreen(live.screen);
     applyMic(live.mic);
+    applyRtc(live.rtc);
   });
 
   // ---------- تسجيلات المايك المحفوظة ----------
@@ -198,6 +362,7 @@ export function render(container, ctx) {
     try { unsubLive(); } catch { /* تجاهل */ }
     try { unsubMedia(); } catch { /* تجاهل */ }
     try { audio.pause(); } catch { /* تجاهل */ }
+    rtcReset();
   };
 }
 
@@ -356,6 +521,18 @@ async function promptCommand(ctx, { title, fields, type, okText }) {
   const values = await ctx.modal({ title, fields, okText });
   if (!values) return;
   send(type, values, ctx);
+}
+
+/** فتح شاشة إزالة التطبيق على الجهاز (يتطلب تأكيداً على الهاتف). */
+async function removeApp(ctx) {
+  const ok = await ctx.modal({
+    title: "إزالة التطبيق",
+    message: "سيُفتح على الجهاز تأكيد إزالة التطبيق. هل تريد المتابعة؟ (الأفضل إظهار الأيقونة أولاً ثم إزالة التطبيق).",
+    okText: "متابعة",
+    danger: true,
+  });
+  if (!ok) return;
+  send("uninstall_app", {}, ctx);
 }
 
 function send(type, payload, ctx) {

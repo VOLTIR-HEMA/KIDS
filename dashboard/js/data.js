@@ -2,6 +2,7 @@
 import {
   collection, doc, getDoc, getDocs, onSnapshot,
   addDoc, deleteDoc, limit, serverTimestamp, where, query,
+  setDoc, arrayUnion,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { deleteObject, ref } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 import { db, storage } from "./firebase.js";
@@ -303,6 +304,31 @@ export async function searchNumber(uid, deviceIds, rawQuery) {
     .slice(0, 20);
 }
 
+/** إشارات WebRTC: كتابة حالة/طلب البث في live/rtc. */
+export async function setRtc(uid, deviceId, data) {
+  try {
+    await setDoc(
+      doc(db, "users", uid, "devices", deviceId, "live", "rtc"),
+      { ...data, updatedAt: Date.now() },
+      { merge: true },
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** إضافة ICE candidate من المتصفح إلى إشارات WebRTC. */
+export async function addRtcCandidate(uid, deviceId, field, candidate) {
+  try {
+    await setDoc(
+      doc(db, "users", uid, "devices", deviceId, "live", "rtc"),
+      { [field]: arrayUnion(candidate), updatedAt: Date.now() },
+      { merge: true },
+    );
+  } catch { /* تجاهل */ }
+}
+
 export function createFirestoreProvider() {
   return {
     mode: "firebase",
@@ -317,6 +343,8 @@ export function createFirestoreProvider() {
     deleteDocItem,
     getDeviceOnce,
     searchNumber,
+    setRtc,
+    addRtcCandidate,
   };
 }
 
@@ -563,5 +591,8 @@ export function createDemoProvider() {
         .map((v) => ({ ...v, sources: Array.from(v.sources) }))
         .sort((a, b) => (b.name ? 1 : 0) - (a.name ? 1 : 0) || b.lastAt - a.lastAt);
     },
+
+    async setRtc() { return true; },
+    async addRtcCandidate() { /* وضع تجريبي */ },
   };
 }

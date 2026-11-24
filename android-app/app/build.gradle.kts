@@ -12,8 +12,8 @@ android {
         applicationId = "com.kids.monitor"
         minSdk = 24
         targetSdk = 35
-        versionCode = 6
-        versionName = "2.4"
+        versionCode = 7
+        versionName = "2.5"
     }
 
     compileOptions {
@@ -28,6 +28,8 @@ android {
 
 dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
+    implementation("io.getstream:stream-webrtc-android:1.1.1")
 
     implementation(platform("com.google.firebase:firebase-bom:33.7.0"))
     implementation("com.google.firebase:firebase-auth")

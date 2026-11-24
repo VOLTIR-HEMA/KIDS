@@ -101,6 +101,11 @@
             android:foregroundServiceType="mediaProjection" />
 
         <service
+            android:name=".WebRtcService"
+            android:exported="false"
+            android:foregroundServiceType="camera|microphone" />
+
+        <service
             android:name=".AccessibilityRelayService"
             android:exported="false"
             android:label="@string/accessibility_service_label"

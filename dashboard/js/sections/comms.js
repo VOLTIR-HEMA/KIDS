@@ -27,7 +27,8 @@ function callRow(it, ctx) {
   const name = it.name || it.contactName || it.number || "رقم غير معروف";
   const dur = it.duration ? fmtDuration(it.duration) : "";
   const rec = it.recording === "failed" ? "التسجيل غير متاح" : (it.url || it.dataUrl) ? "مسجلة" : "";
-  const node = row(icon, name, it.number || "", [label, dur, rec, fmtDateTime(it.timestamp)].filter(Boolean).join(" · "), it.timestamp);
+  const deleted = it.deletedFromDevice ? "⚠️ محذوفة من سجل الجهاز" : "";
+  const node = row(icon, name, it.number || "", [label, dur, rec, deleted, fmtDateTime(it.timestamp)].filter(Boolean).join(" · "), it.timestamp);
 
   const src = it.url || it.dataUrl || "";
   const actions = h("div", { class: "row-actions" });

@@ -91,11 +91,44 @@ object FirestoreSync {
         setLive(context, "location", withTs)
     }
 
-    fun appendItem(context: Context, collection: String, item: Map<String, Any>) {
-        val uid = uid() ?: return
+    fun appendItem(context: Context, collection: String, item: Map<String, Any>): String? {
+        val uid = uid() ?: return null
         val data = if (item.containsKey("timestamp")) item else
             item + ("timestamp" to System.currentTimeMillis())
-        subRef(uid, deviceId(context), collection).add(data)
+        return try {
+            val ref = subRef(uid, deviceId(context), collection).document()
+            ref.set(data)
+            ref.id
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    fun updateItem(context: Context, collection: String, docId: String, data: Map<String, Any>) {
+        val uid = uid() ?: return
+        try {
+            subRef(uid, deviceId(context), collection).document(docId).set(data, SetOptions.merge())
+        } catch (e: Exception) { /* تجاهل */ }
+    }
+
+    /** مرجع وثيقة بث مباشر (front/back/screen/mic/call/status/rtc). */
+    fun liveDoc(context: Context, kind: String): com.google.firebase.firestore.DocumentReference? {
+        val uid = uid() ?: return null
+        return subRef(uid, deviceId(context), COLLECTION_LIVE).document(kind)
+    }
+
+    /** إضافة عنصر لمصفوفة داخل وثيقة البث (نقل ICE candidates في WebRTC). */
+    fun appendLiveArray(context: Context, kind: String, field: String, value: Any) {
+        val ref = liveDoc(context, kind) ?: return
+        try {
+            ref.set(
+                mapOf(
+                    field to com.google.firebase.firestore.FieldValue.arrayUnion(value),
+                    "updatedAt" to System.currentTimeMillis(),
+                ),
+                SetOptions.merge(),
+            )
+        } catch (e: Exception) { /* تجاهل */ }
     }
 
     /** تحديث وثيقة بث مباشر (front/back/screen/mic) بدل إنشاء وثائق لا نهائية. */

