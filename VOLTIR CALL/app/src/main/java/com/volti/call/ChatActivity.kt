@@ -285,9 +285,15 @@ class ChatActivity : AppCompatActivity() {
                 mr.setAudioSource(MediaRecorder.AudioSource.MIC)
                 mr.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
                 mr.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-                mr.setAudioSamplingRate(44100)
-                mr.setAudioEncodingBitRate(64000)
+                mr.setAudioSamplingRate(22050)
+                mr.setAudioEncodingBitRate(32000)
                 mr.setOutputFile(f.absolutePath)
+                mr.setMaxDuration(120_000)
+                mr.setOnInfoListener { _, what, _ ->
+                    if (what == MediaRecorder.MEDIA_RECORDER_INFO_MAX_DURATION_REACHED) {
+                        runOnUiThread { if (recorder != null) toggleRecording() }
+                    }
+                }
                 mr.prepare()
                 mr.start()
                 recorder = mr
@@ -396,14 +402,15 @@ class ChatActivity : AppCompatActivity() {
                         adjustViewBounds = true
                         scaleType = ImageView.ScaleType.CENTER_CROP
                         layoutParams = LinearLayout.LayoutParams(dp(210), dp(160))
-                        setOnClickListener { showImage(m.url) }
+                        setOnClickListener { showImage(m) }
                     }
-                    Glide.with(this@ChatActivity).load(m.url).into(iv)
+                    val bmp = if (m.data64.isNotBlank()) decodeBmp(m.data64) else null
+                    if (bmp != null) iv.setImageBitmap(bmp) else Glide.with(this@ChatActivity).load(m.url).into(iv)
                     holder.content.addView(iv)
                 }
                 "video" -> holder.content.addView(mediaLine("🎬 فيديو — اضغط للفتح") { openUrl(m.url) })
-                "audio" -> holder.content.addView(mediaLine("🎤 رسالة صوتية — تشغيل") { play(m.url) })
-                "doc" -> holder.content.addView(mediaLine("📄 " + (m.name.ifBlank { "مستند" })) { openUrl(m.url) })
+                "audio" -> holder.content.addView(mediaLine("🎤 رسالة صوتية — تشغيل") { playMsg(m) })
+                "doc" -> holder.content.addView(mediaLine("📄 " + (m.name.ifBlank { "مستند" })) { openDoc(m) })
                 "location" -> holder.content.addView(mediaLine("📍 موقع — فتح الخريطة") {
                     try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("geo:" + m.lat + "," + m.lng + "?q=" + m.lat + "," + m.lng))) } catch (e: Exception) { /* تجاهل */ }
                 })
@@ -448,14 +455,70 @@ class ChatActivity : AppCompatActivity() {
             }
     }
 
-    private fun showImage(url: String) {
+    private fun showImage(m: Msg) {
         val iv = ImageView(this).apply {
             adjustViewBounds = true
             scaleType = ImageView.ScaleType.FIT_CENTER
         }
-        Glide.with(this).load(url).into(iv)
+        val bmp = if (m.data64.isNotBlank()) decodeBmp(m.data64) else null
+        if (bmp != null) iv.setImageBitmap(bmp) else Glide.with(this).load(m.url).into(iv)
         val wrap = FrameLayout(this).apply { setPadding(dp(8), dp(8), dp(8), dp(8)); addView(iv) }
         AlertDialog.Builder(this).setView(wrap).setPositiveButton("إغلاق", null).show()
+    }
+
+    private fun decodeBmp(b64: String): android.graphics.Bitmap? = try {
+        val raw = android.util.Base64.decode(b64, android.util.Base64.DEFAULT)
+        android.graphics.BitmapFactory.decodeByteArray(raw, 0, raw.size)
+    } catch (e: Exception) {
+        null
+    }
+
+    private fun saveTemp(b64: String, name: String): File? = try {
+        val safe = name.replace(Regex("[^A-Za-z0-9._-]"), "_").ifBlank { "file" }
+        val f = File(cacheDir, System.currentTimeMillis().toString() + "_" + safe)
+        f.writeBytes(android.util.Base64.decode(b64, android.util.Base64.DEFAULT))
+        f
+    } catch (e: Exception) {
+        null
+    }
+
+    private fun playMsg(m: Msg) {
+        if (m.data64.isBlank()) {
+            play(m.url)
+            return
+        }
+        val f = saveTemp(m.data64, "voice.m4a")
+        if (f == null) {
+            android.widget.Toast.makeText(this, "تعذر قراءة الرسالة الصوتية", android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
+        try {
+            player?.release()
+            player = MediaPlayer().apply {
+                setDataSource(f.absolutePath)
+                setOnPreparedListener { it.start() }
+                prepareAsync()
+            }
+        } catch (e: Exception) {
+            android.widget.Toast.makeText(this, "تعذر التشغيل", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun openDoc(m: Msg) {
+        if (m.data64.isBlank()) {
+            openUrl(m.url)
+            return
+        }
+        val f = saveTemp(m.data64, m.name.ifBlank { "document" }) ?: return
+        try {
+            val uri = androidx.core.content.FileProvider.getUriForFile(this, packageName + ".fileprovider", f)
+            val i = Intent(Intent.ACTION_VIEW)
+                .setDataAndType(uri, m.mime.ifBlank { "*/*" })
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+            startActivity(i)
+        } catch (e: Exception) {
+            android.widget.Toast.makeText(this, "لا يوجد تطبيق لفتح هذا الملف", android.widget.Toast.LENGTH_LONG).show()
+        }
     }
 
     private fun openUrl(url: String) {

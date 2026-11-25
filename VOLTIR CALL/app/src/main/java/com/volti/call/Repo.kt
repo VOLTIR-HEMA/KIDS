@@ -24,6 +24,8 @@ data class Msg(
     val text: String,
     val url: String,
     val name: String,
+    val data64: String,
+    val mime: String,
     val lat: Double,
     val lng: Double,
     val contactName: String,
@@ -178,6 +180,8 @@ object Repo {
                             d.getString("text").orEmpty(),
                             d.getString("url").orEmpty(),
                             d.getString("name").orEmpty(),
+                            d.getString("data64").orEmpty(),
+                            d.getString("mime").orEmpty(),
                             (d.get("lat") as? Number)?.toDouble() ?: 0.0,
                             (d.get("lng") as? Number)?.toDouble() ?: 0.0,
                             d.getString("contactName").orEmpty(),
@@ -231,6 +235,7 @@ object Repo {
         batch.commit()
     }
 
+    /** إرفاق بدون Storage: ضغط الصور وتضمين الملف Base64 داخل مستند Firestore (حد ~600KB). */
     fun uploadAndSend(
         ctx: Context,
         chatId: String,
@@ -242,25 +247,64 @@ object Repo {
         extra: Map<String, Any> = emptyMap(),
         expiresSec: Int = 0,
     ) {
-        val safe = displayName.replace(Regex("[^A-Za-z0-9._-]"), "_").ifBlank { "file" }
-        val path = "volti/" + chatId + "/" + System.currentTimeMillis() + "_" + safe
-        val ref = Fb.storage.reference.child(path)
-        ref.putFile(uri)
-            .addOnSuccessListener {
-                ref.downloadUrl.addOnSuccessListener { url ->
-                    val data = HashMap<String, Any>(extra)
-                    data["type"] = type
-                    data["url"] = url.toString()
-                    data["name"] = displayName
-                    data["mime"] = mime
-                    data["expiresSec"] = expiresSec
-                    if (type == "image" || type == "video") data["text"] = ""
-                    sendMessage(chatId, peerUid, data)
-                }
+        val bytes = if (type == "image") shrinkImage(ctx, uri) else readBytes(ctx, uri)
+        if (bytes == null || bytes.isEmpty()) {
+            android.widget.Toast.makeText(ctx, "تعذر قراءة الملف", android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (bytes.size > MAX_BYTES) {
+            android.widget.Toast.makeText(
+                ctx,
+                "حجم الملف " + (bytes.size / 1024) + " كيلوبايت — الحد " + (MAX_BYTES / 1024) +
+                    ". اختر ملفاً أصغر (Firebase Storage غير مفعّل على الخطة المجانية).",
+                android.widget.Toast.LENGTH_LONG,
+            ).show()
+            return
+        }
+        val data = HashMap<String, Any>(extra)
+        data["type"] = type
+        data["name"] = displayName
+        data["mime"] = mime
+        data["expiresSec"] = expiresSec
+        data["data64"] = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+        if (type == "image" || type == "video") data["text"] = ""
+        sendMessage(chatId, peerUid, data)
+    }
+
+    const val MAX_BYTES = 600_000
+
+    private fun readBytes(ctx: Context, uri: Uri): ByteArray? = try {
+        ctx.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+    } catch (e: Exception) {
+        null
+    }
+
+    /** تصغير الصورة إلى 1280px وضغطها JPEG حتى تلائم حد Firestore. */
+    private fun shrinkImage(ctx: Context, uri: Uri): ByteArray? {
+        return try {
+            val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            ctx.contentResolver.openInputStream(uri)?.use {
+                android.graphics.BitmapFactory.decodeStream(it, null, bounds)
             }
-            .addOnFailureListener { e ->
-                android.widget.Toast.makeText(ctx, "تعذر رفع الملف: " + (e.localizedMessage ?: ""), android.widget.Toast.LENGTH_LONG).show()
+            var sample = 1
+            while ((bounds.outWidth / sample) > 1280 || (bounds.outHeight / sample) > 1280) sample *= 2
+            val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
+            var bmp = ctx.contentResolver.openInputStream(uri)?.use {
+                android.graphics.BitmapFactory.decodeStream(it, null, opts)
+            } ?: return null
+            var out = java.io.ByteArrayOutputStream()
+            bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 70, out)
+            var guard = 0
+            while (out.size() > 550_000 && bmp.width > 320 && guard < 8) {
+                guard++
+                bmp = android.graphics.Bitmap.createScaledBitmap(bmp, bmp.width * 3 / 4, bmp.height * 3 / 4, true)
+                out = java.io.ByteArrayOutputStream()
+                bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 65, out)
             }
+            out.toByteArray()
+        } catch (e: Exception) {
+            null
+        }
     }
 
     fun markRead(chatId: String, peerUid: String, messages: List<Msg>) {
