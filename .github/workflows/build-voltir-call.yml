@@ -1,0 +1,53 @@
+name: Build VOLTIR CALL APK
+
+on:
+  push:
+    paths:
+      - "VOLTIR CALL/**"
+      - ".github/workflows/build-voltir-call.yml"
+  pull_request:
+    paths:
+      - "VOLTIR CALL/**"
+      - ".github/workflows/build-voltir-call.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  assemble-debug:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Make gradlew executable
+        run: chmod +x "VOLTIR CALL/gradlew"
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Accept licenses and install SDK 35
+        run: |
+          yes | sdkmanager --licenses > /dev/null || true
+          yes | sdkmanager --install "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build debug APK
+        working-directory: "VOLTIR CALL"
+        run: ./gradlew --no-daemon assembleDebug
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: voltir-call-debug
+          path: "VOLTIR CALL/app/build/outputs/apk/debug/app-debug.apk"
+          if-no-files-found: error
