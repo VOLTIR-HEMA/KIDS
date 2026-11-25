@@ -14,16 +14,25 @@ export function render(container, ctx) {
   const saved = readState(storeKey);
 
   // ---------- بث مباشر WebRTC ----------
-  root.append(sectionTitle("🔴", "بث مباشر (فيديو + صوت)", "اتصال WebRTC حقيقي بين الجهاز واللوحة — يفتح كاميرا وميكروفون الجهاز أثناء البث"));
-  const video = h("video", { class: "live-video", autoplay: true, playsinline: true, controls: true });
+  root.append(sectionTitle("🔴", "بث مباشر (فيديو + صوت)", "الكاميرتان أمامية وخلفية معاً — كل كاميرا لها زر إيقاف مستقل مع استمرار الأخرى"));
+  const frontVideo = h("video", { class: "live-video rtc-video", autoplay: true, playsinline: true });
+  const backVideo = h("video", { class: "live-video rtc-video", autoplay: true, playsinline: true });
+  const frontTile = rtcTile("الكاميرا الأمامية", frontVideo, "front");
+  const backTile = rtcTile("الكاميرا الخلفية", backVideo, "back");
   const rtcStatus = h("div", { class: "muted small", text: "يتطلب صلاحية الكاميرا والميكروفون + «الظهور فوق التطبيقات» على الجهاز." });
   const rtcStart = h("button", { class: "btn primary sm", type: "button", text: "▶ بدء البث المباشر" });
   const rtcStop = h("button", { class: "btn ghost sm", type: "button", text: "⏹ إيقاف البث", disabled: true });
+  const videoRecStart = h("button", { class: "btn primary sm", type: "button", text: "⏺ تسجيل فيديو (5 دقائق)" });
+  const videoRecStop = h("button", { class: "btn ghost sm", type: "button", text: "⏹ إيقاف التسجيل", disabled: true });
+  const videoRecList = h("div", { class: "audio-queue" });
   root.append(h("div", { class: "card live-card" }, [
-    video,
+    h("div", { class: "rtc-grid" }, [frontTile.el, backTile.el]),
     rtcStatus,
     h("div", { class: "actions-row" }, [rtcStart, rtcStop]),
-    h("div", { class: "muted small", text: "إذا فشل الاتصال المباشر استخدم كاميرا الصور بالأسفل (شبه لحظية) كبديل." }),
+    h("div", { class: "actions-row" }, [videoRecStart, videoRecStop]),
+    h("div", { class: "muted small", text: "التسجيل يستمر على الجهاز حتى بعد إغلاق اللوحة، ويُحفظ داخل تطبيق الجهاز لا في المعرض." }),
+    h("div", { class: "muted small", text: "تسجيلات الفيديو:" }),
+    videoRecList,
   ]));
 
   // ---------- الكاميرات ----------
@@ -52,10 +61,7 @@ export function render(container, ctx) {
     screenImg,
     screenInfo,
     h("div", { class: "actions-row" }, [
-      actionButton("📸", "لقطة الآن", () => send("take_screenshot", {}, ctx)),
-      actionButton("🔄", "فحص الحالة", () => send("screen_status", {}, ctx)),
       actionButton("⏹️", "إيقاف المشاركة", () => send("screen_stop", {}, ctx)),
-      screenFull,
     ]),
     h("div", { class: "muted small", text: "بث شبه لحظي: لقطة كل 1.5 ثانية. لبدء البث: افتح التطبيق ← «مشاركة الشاشة» ← موافق مرة واحدة. اللقطات المحفوظة في قسم الوسائط مع زر حذف." }),
   ]);
@@ -74,7 +80,8 @@ export function render(container, ctx) {
     audio,
     h("div", { class: "muted small", text: "مقاطع 3 ثوانٍ تُشغّل تلقائياً بالترتيب = بث شبه لحظي." }),
     h("div", { class: "actions-row" }, [
-      actionButton("⏺️", "تسجيل لحظي (30 ث)", () => send("record_mic", {}, ctx)),
+      actionButton("⏺️", "تسجيل صوتي (5 دقائق)", () => send("record_audio_start", { durationSec: 300 }, ctx)),
+      actionButton("⏹️", "إيقاف التسجيل", () => send("record_audio_stop", {}, ctx)),
     ]),
     micList,
   ]);
@@ -88,6 +95,36 @@ export function render(container, ctx) {
   });
 
   // ---------- منطق WebRTC ----------
+  function rtcTile(label, videoEl, facing) {
+    const badge = h("span", { class: "live-badge hidden", text: "متوقفة" });
+    const full = h("button", { class: "btn ghost sm", type: "button", text: "⛶ تكبير" });
+    full.addEventListener("click", () => {
+      try {
+        if (videoEl.requestFullscreen) videoEl.requestFullscreen().catch(() => {});
+        else if (videoEl.webkitRequestFullscreen) videoEl.webkitRequestFullscreen();
+      } catch { /* تجاهل */ }
+    });
+    const stopBtn = h("button", { class: "btn ghost sm", type: "button", text: "⏹ إيقاف", disabled: true });
+    stopBtn.addEventListener("click", () => {
+      send("rtc_camera_stop", { facing }, ctx);
+      stopBtn.disabled = true;
+      badge.classList.remove("hidden");
+      try { videoEl.srcObject = null; } catch { /* تجاهل */ }
+    });
+    const el = h("div", { class: "rtc-tile" }, [
+      videoEl,
+      h("div", { class: "rtc-tile-bar" }, [h("strong", { text: label }), badge, full, stopBtn]),
+    ]);
+    return { el, video: videoEl, badge, stop: stopBtn };
+  }
+
+  function setCamState(facing, on) {
+    const t = facing === "back" ? backTile : frontTile;
+    t.badge.classList.toggle("hidden", !!on);
+    t.stop.disabled = !on;
+    if (!on) { try { t.video.srcObject = null; } catch { /* تجاهل */ } }
+  }
+
   let rtcPc = null;
   let rtcSession = null;
   let rtcMic = null;
@@ -102,7 +139,10 @@ export function render(container, ctx) {
     rtcSession = null;
     rtcAnswered = false;
     childSeen = 0;
-    try { video.srcObject = null; } catch { /* تجاهل */ }
+    try { frontVideo.srcObject = null; } catch { /* تجاهل */ }
+    try { backVideo.srcObject = null; } catch { /* تجاهل */ }
+    setCamState("front", false);
+    setCamState("back", false);
     rtcStart.disabled = false;
     rtcStop.disabled = true;
   }
@@ -119,8 +159,12 @@ export function render(container, ctx) {
     });
     rtcPc.ontrack = (e) => {
       const stream = e.streams?.[0] || new MediaStream([e.track]);
-      video.srcObject = stream;
-      video.play().catch(() => {});
+      const sid = (e.streams?.[0]?.id || e.track?.id || "").toLowerCase();
+      const isBack = sid.includes("back");
+      const target = isBack ? backVideo : frontVideo;
+      target.srcObject = stream;
+      target.play().catch(() => {});
+      setCamState(isBack ? "back" : "front", true);
       rtcStatus.textContent = "🟢 بث مباشر يعمل";
     };
     rtcPc.onicecandidate = (e) => {
@@ -156,6 +200,8 @@ export function render(container, ctx) {
     rtcSession = "s" + Date.now();
     rtcStart.disabled = true;
     rtcStop.disabled = false;
+    setCamState("front", true);
+    setCamState("back", true);
     rtcStatus.textContent = "جارٍ طلب البث من الجهاز…";
     await ctx.data.setRtc(ctx.uid, ctx.deviceId, {
       request: true,
@@ -179,6 +225,8 @@ export function render(container, ctx) {
 
   async function applyRtc(rtc) {
     if (!rtc) return;
+    if (typeof rtc.frontOn === "boolean") setCamState("front", rtc.frontOn);
+    if (typeof rtc.backOn === "boolean") setCamState("back", rtc.backOn);
     if (!rtcSession && rtc.offer?.s && rtc.status !== "stopped") {
       rtcSession = rtc.offer.s;
       rtcStart.disabled = true;
@@ -235,6 +283,26 @@ export function render(container, ctx) {
   rtcStart.addEventListener("click", startRtc);
   rtcStop.addEventListener("click", stopRtc);
 
+  let recTimer = null;
+  videoRecStart.addEventListener("click", () => {
+    send("record_video_start", { durationSec: 300, facing: "back" }, ctx);
+    videoRecStart.disabled = true;
+    videoRecStop.disabled = false;
+    ctx.toast?.("بدأ تسجيل الفيديو — يستمر بعد إغلاق اللوحة");
+    if (recTimer) clearTimeout(recTimer);
+    recTimer = setTimeout(() => {
+      videoRecStart.disabled = false;
+      videoRecStop.disabled = true;
+      recTimer = null;
+    }, 305000);
+  });
+  videoRecStop.addEventListener("click", () => {
+    send("record_video_stop", {}, ctx);
+    videoRecStart.disabled = false;
+    videoRecStop.disabled = true;
+    if (recTimer) { clearTimeout(recTimer); recTimer = null; }
+  });
+
   // ---------- أوامر سريعة ----------
   root.append(sectionTitle("⚡", "أوامر سريعة"));
   const actions = h("div", { class: "actions-row" }, [
@@ -272,34 +340,53 @@ export function render(container, ctx) {
     applyRtc(live.rtc);
   });
 
-  // ---------- تسجيلات المايك المحفوظة ----------
+  // ---------- التسجيلات المحفوظة (صوت + فيديو) ----------
+  function recRow(item, kind) {
+    const src = item.url || item.dataUrl;
+    const del = h("button", { class: "icon-btn danger", type: "button", title: "حذف التسجيل", text: "🗑" });
+    del.addEventListener("click", async () => {
+      try {
+        if (ctx.data.deleteMediaItem) await ctx.data.deleteMediaItem(ctx.uid, ctx.deviceId, item);
+        if (item.localName) send("delete_recording", { name: item.localName }, ctx);
+        ctx.toast("تم حذف التسجيل");
+      } catch { ctx.toast("تعذر الحذف", "error"); }
+    });
+    const dl = h("a", {
+      class: "btn ghost sm",
+      href: src,
+      download: item.localName || item.name || (kind === "video" ? "video.mp4" : "audio.m4a"),
+      text: "⬇ تنزيل",
+    });
+    const player = kind === "video"
+      ? h("video", { controls: true, preload: "none", src, class: "rec-player" })
+      : h("audio", { controls: true, preload: "none", src });
+    const dur = item.durationMs ? Math.round(Number(item.durationMs) / 1000) + " ث" : "";
+    const sizeMb = item.size ? (Number(item.size) / 1048576).toFixed(1) + " MB" : "";
+    return h("div", { class: "clip-row" }, [
+      h("div", { class: "clip-head" }, [
+        h("div", { class: "clip-name", text: (kind === "video" ? "🎬 " : "🎙️ ") + (item.localName || item.name || "تسجيل") }),
+        h("div", { class: "actions-row" }, [dl, del]),
+      ]),
+      player,
+      h("div", { class: "muted small", text: [dur, sizeMb, fmtDateTime(item.timestamp)].filter(Boolean).join(" · ") }),
+    ]);
+  }
+
   const unsubMedia = ctx.data.subscribeCollection(ctx.uid, ctx.deviceId, "media", (items, err) => {
     micList.innerHTML = "";
+    videoRecList.innerHTML = "";
     if (err || !items) return;
-    const clips = items
-      .filter((m) => m && (m.mic === true || m.recording === "saved") && (m.url || m.dataUrl))
-      .slice(0, 8);
-    if (!clips.length) {
-      micList.append(h("div", { class: "muted small", text: "لا توجد تسجيلات محفوظة بعد." }));
-      return;
-    }
-    for (const clip of clips) {
-      const del = h("button", { class: "icon-btn danger", type: "button", title: "حذف التسجيل", text: "🗑" });
-      del.addEventListener("click", async () => {
-        try {
-          if (ctx.data.deleteMediaItem) await ctx.data.deleteMediaItem(ctx.uid, ctx.deviceId, clip);
-          ctx.toast("تم حذف التسجيل");
-        } catch { ctx.toast("تعذر الحذف", "error"); }
-      });
-      micList.append(h("div", { class: "clip-row" }, [
-        h("div", { class: "clip-head" }, [
-          h("div", { class: "clip-name", text: clip.name || "تسجيل" }),
-          del,
-        ]),
-        h("audio", { controls: true, preload: "none", src: clip.url || clip.dataUrl }),
-        h("div", { class: "muted small", text: fmtDateTime(clip.timestamp) }),
-      ]));
-    }
+    const all = items.filter((m) => m && (m.url || m.dataUrl));
+    const clips = all
+      .filter((m) => m.type !== "video" && (m.mic === true || m.recording === "saved"))
+      .slice(0, 12);
+    const vids = all
+      .filter((m) => m.type === "video" && (m.recording === "saved" || m.kind === "recording"))
+      .slice(0, 12);
+    if (!clips.length) micList.append(h("div", { class: "muted small", text: "لا توجد تسجيلات صوتية محفوظة بعد." }));
+    for (const clip of clips) micList.append(recRow(clip, "audio"));
+    if (!vids.length) videoRecList.append(h("div", { class: "muted small", text: "لا توجد تسجيلات فيديو محفوظة بعد." }));
+    for (const m of vids) videoRecList.append(recRow(m, "video"));
   });
 
   // ---------- طابور تشغيل المايك ----------
@@ -362,6 +449,7 @@ export function render(container, ctx) {
     try { unsubLive(); } catch { /* تجاهل */ }
     try { unsubMedia(); } catch { /* تجاهل */ }
     try { audio.pause(); } catch { /* تجاهل */ }
+    if (recTimer) { clearTimeout(recTimer); recTimer = null; }
     rtcReset();
   };
 }
