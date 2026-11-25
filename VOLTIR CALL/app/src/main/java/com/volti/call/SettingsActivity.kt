@@ -31,7 +31,7 @@ class SettingsActivity : AppCompatActivity() {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.parseColor("#F7F8FA"))
         }
-        root.addView(topBar(this, "الإعدادات", "الحساب والاتصال والأذونات") { finish() })
+        root.addView(topBar(this, "الإعدادات", "الحساب والاتصال والأذونات", { finish() }))
 
         val scroll = ScrollView(this)
         val body = LinearLayout(this).apply {

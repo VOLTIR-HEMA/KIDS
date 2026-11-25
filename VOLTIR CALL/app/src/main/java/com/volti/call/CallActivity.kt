@@ -103,8 +103,8 @@ class CallActivity : AppCompatActivity() {
     private var statusText: TextView? = null
     private var timerText: TextView? = null
     private var banner: TextView? = null
-    private var muteBtn: TextView? = null
-    private var camBtn: TextView? = null
+    private var muteBtn: LinearLayout? = null
+    private var camBtn: LinearLayout? = null
     private var remoteBox: FrameLayout? = null
 
     private var muted = false
@@ -195,12 +195,14 @@ class CallActivity : AppCompatActivity() {
             gravity = Gravity.CENTER
             setPadding(dp(10), dp(10), dp(10), dp(22))
         }
-        muteBtn = circleButton("🎙", "كتم") { toggleMute() }
-        camBtn = circleButton("📷", if (video) "الكاميرا" else "فيديو") { toggleVideo() }
+        val mb = circleButton("🎙", "كتم") { toggleMute() }
+        val cb = circleButton("📷", if (video) "الكاميرا" else "فيديو") { toggleVideo() }
+        muteBtn = mb
+        camBtn = cb
         val switchBtn = circleButton("🔄", "تبديل") { switchCamera() }
         val cdBtn = circleButton("⏱", "عداد تلقائي") { countdownDialog() }
         val endBtn = circleButton("✖", "إنهاء", Color.parseColor("#E53935")) { hangup("user") }
-        for (b in listOf(muteBtn!!, camBtn!!, switchBtn, cdBtn, endBtn)) {
+        for (b in listOf<View>(mb, cb, switchBtn, cdBtn, endBtn)) {
             controls.addView(b, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         }
         root.addView(controls, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM))

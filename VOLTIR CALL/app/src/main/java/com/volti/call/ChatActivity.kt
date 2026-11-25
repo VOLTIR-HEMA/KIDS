@@ -221,7 +221,7 @@ class ChatActivity : AppCompatActivity() {
     }
 
     private fun sendText() {
-        val text = input?.text?.toString().trim().orEmpty()
+        val text = input?.text?.toString()?.trim().orEmpty()
         if (text.isBlank() || chatId.isBlank()) return
         input?.setText("")
         send(mapOf("type" to "text", "text" to text))
@@ -389,7 +389,6 @@ class ChatActivity : AppCompatActivity() {
                 if (mine) Color.parseColor("#D9FDD3") else Color.WHITE,
                 dp(12).toFloat(),
             )
-            holder.bubble.maxWidth = dp(290)
             holder.content.removeAllViews()
             when (m.type) {
                 "image" -> {
