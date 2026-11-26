@@ -254,11 +254,16 @@ class ChatsTab(act: MainActivity) : Tab(act) {
         val chatted = chats.map { it.peer }.toHashSet()
         for (p in contacts) {
             if (chatted.contains(p.uid)) continue
+            val subtitle = if (p.alias.isNotBlank() && p.alias != p.name) {
+                p.name + " · @" + p.username + (if (p.phone.isNotBlank()) " · " + p.phone else "")
+            } else {
+                "@" + p.username + (if (p.phone.isNotBlank()) " · " + p.phone else "")
+            }
             out.add(
                 ChatEntry(
                     p.uid,
                     p.label,
-                    "@" + p.username + (if (p.phone.isNotBlank()) " · " + p.phone else ""),
+                    subtitle,
                     0L,
                     0,
                     p.label,

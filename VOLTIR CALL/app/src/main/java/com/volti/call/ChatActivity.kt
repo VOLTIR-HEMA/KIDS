@@ -190,9 +190,15 @@ class ChatActivity : AppCompatActivity() {
 
     private fun updateTitle() {
         val c = contact
-        titleText?.text = c?.label?.ifBlank { peerName } ?: peerName
+        val label = c?.label?.ifBlank { peerName } ?: peerName
+        titleText?.text = label
         val uname = c?.username.orEmpty()
-        subtitleText?.text = if (uname.isNotBlank()) "@" + uname else "محادثة عبر Firebase"
+        val realName = c?.name.orEmpty()
+        subtitleText?.text = when {
+            uname.isBlank() -> "محادثة عبر Firebase"
+            realName.isNotBlank() && realName != label -> realName + " · @" + uname
+            else -> "@" + uname
+        }
     }
 
     private fun applyRelationUi() {

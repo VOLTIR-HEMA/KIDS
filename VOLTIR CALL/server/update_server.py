@@ -36,19 +36,38 @@ def lan_ip() -> str:
         return "127.0.0.1"
 
 
+def candidates(name: str):
+    """أماكن البحث عن ملف النسخة: مجلد السكريبت، مجلد المشروع، سطح المكتب."""
+    home = os.path.expanduser("~")
+    return [
+        os.path.join(BASE, name),
+        os.path.join(os.path.dirname(BASE), name),
+        os.path.join(home, "Desktop", name),
+        os.path.join(home, "Downloads", name),
+    ]
+
+
 def ask_apk() -> str:
     while True:
         name = input("اكتب اسم ملف النسخة الجديدة (مثال: app-debug.apk): ").strip().strip('"')
         if not name:
             print("لم تكتب اسماً، حاول مرة أخرى.")
             continue
-        path = os.path.join(BASE, name)
-        if not os.path.isfile(path):
-            print("الملف غير موجود بجانب السكريبت: " + path)
+        if os.path.isabs(name) and os.path.isfile(name):
+            path = name
+        else:
+            path = ""
+            for c in candidates(os.path.basename(name)):
+                if os.path.isfile(c):
+                    path = c
+                    break
+        if not path:
+            print("الملف غير موجود. ضعه بجانب السكريبت أو على سطح المكتب.")
             continue
-        if not name.lower().endswith(".apk"):
+        if not path.lower().endswith(".apk"):
             print("لازم يكون الملف بصيغة .apk")
             continue
+        print("تم العثور عليه: " + path)
         return path
 
 
