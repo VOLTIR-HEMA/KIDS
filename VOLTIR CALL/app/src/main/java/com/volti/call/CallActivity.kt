@@ -128,22 +128,32 @@ class CallActivity : AppCompatActivity() {
             return
         }
         setContentView(buildUi())
-        ensurePerms()
         isCaller = !incoming
-        if (incoming) {
-            if (callId.isBlank()) {
+        Repo.isContact(peerUid) { ok ->
+            if (!ok) {
+                android.widget.Toast.makeText(this, "المكالمات متاحة لجهات الاتصال فقط — أضف الشخص أولاً", android.widget.Toast.LENGTH_LONG).show()
+                if (incoming && callId.isNotBlank()) {
+                    try { Fb.db.collection(Fb.CALLS).document(callId).update("state", "declined") } catch (e: Exception) { /* تجاهل */ }
+                }
                 finish()
-                return
+                return@isContact
             }
-            doc = Fb.db.collection(Fb.CALLS).document(callId)
-            setupPeer()
-            watchCallDoc()
-            watchCandidates()
-            statusText?.text = "مكالمة واردة — جارٍ الرد"
-        } else {
-            createCall()
+            ensurePerms()
+            if (incoming) {
+                if (callId.isBlank()) {
+                    finish()
+                    return@isContact
+                }
+                doc = Fb.db.collection(Fb.CALLS).document(callId)
+                setupPeer()
+                watchCallDoc()
+                watchCandidates()
+                statusText?.text = "مكالمة واردة — جارٍ الرد"
+            } else {
+                createCall()
+            }
+            startTicker()
         }
-        startTicker()
     }
 
     // ------------------------------------------------------------ الواجهة
@@ -442,7 +452,7 @@ class CallActivity : AppCompatActivity() {
 
     private fun onCallState(snap: DocumentSnapshot) {
         val state = snap.getString("state").orEmpty()
-        if (state == "ended") {
+        if (state == "ended" || state == "declined") {
             if (!ended) {
                 ended = true
                 toast("انتهت المكالمة")

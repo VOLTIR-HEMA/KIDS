@@ -2,12 +2,8 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    function signedIn() {
-      return request.auth != null;
-    }
-    function owns(uid) {
-      return signedIn() && request.auth.uid == uid;
-    }
+    function signedIn() { return request.auth != null; }
+    function owns(uid) { return signedIn() && request.auth.uid == uid; }
 
     // ---------- KIDS (كما كانت) ----------
     match /users/{uid} {
@@ -23,6 +19,33 @@ service cloud.firestore {
       allow write: if signedIn() && request.auth.uid == uid;
     }
 
+    match /volti_usernames/{name} {
+      allow read: if signedIn();
+      allow create: if signedIn() && request.resource.data.uid == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    // جهات الاتصال (قبول الصداقة يكتب جهة الاتصال عند الطرفين)
+    match /volti_contacts/{uid}/items/{peer} {
+      allow read: if signedIn();
+      allow write: if signedIn();
+    }
+
+    match /volti_requests/{reqId} {
+      allow read: if signedIn() &&
+        (request.auth.uid == resource.data.from || request.auth.uid == resource.data.to);
+      allow create: if signedIn() && request.resource.data.from == request.auth.uid;
+      allow update: if signedIn() &&
+        (request.auth.uid == resource.data.from || request.auth.uid == resource.data.to);
+      allow delete: if false;
+    }
+
+    match /volti_blocks/{uid}/items/{peer} {
+      allow read: if signedIn();
+      allow write: if signedIn() && request.auth.uid == uid;
+    }
+
+    // محادثات ورسائل
     match /volti_chats/{chatId} {
       allow read, update: if signedIn() && request.auth.uid in resource.data.members;
       allow create: if signedIn() && request.auth.uid in request.resource.data.members;
@@ -37,6 +60,7 @@ service cloud.firestore {
       }
     }
 
+    // مكالمات وإشارات WebRTC
     match /volti_calls/{callId} {
       allow read: if signedIn() &&
         (request.auth.uid == resource.data.from || request.auth.uid == resource.data.to);
@@ -57,9 +81,17 @@ service cloud.firestore {
       }
     }
 
+    // الحالات النصية/الصور/الفيديو
     match /volti_status/{uid} {
       allow read: if signedIn();
       allow write: if signedIn() && request.auth.uid == uid;
+    }
+
+    // أجزاء وسائط الحالات
+    match /volti_media/{mediaId}/chunks/{chunkId} {
+      allow read: if signedIn();
+      allow create: if signedIn();
+      allow update, delete: if false;
     }
 
     match /volti_communities/{communityId} {
@@ -69,7 +101,6 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    // الباقي مغلق
     match /{document=**} {
       allow read, write: if false;
     }

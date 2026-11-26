@@ -47,6 +47,13 @@ class ChatActivity : AppCompatActivity() {
     private var recFile: File? = null
     private var player: MediaPlayer? = null
     private var lastMarkedCount = -1
+    private var relationBar: TextView? = null
+    private var inputRow: View? = null
+    private var titleText: TextView? = null
+    private var subtitleText: TextView? = null
+    private var contact: Person? = null
+    private var blockedByMe = false
+    private var peerBlockedMe = false
 
     private val pickImage = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) upload(uri, "image", "photo_" + System.currentTimeMillis() + ".jpg", "image/jpeg")
@@ -88,6 +95,7 @@ class ChatActivity : AppCompatActivity() {
             chatId = id
             loadMessages()
         }
+        refreshRelation()
     }
 
     private fun build(): View {
@@ -114,13 +122,24 @@ class ChatActivity : AppCompatActivity() {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(8), 0, 0, 0)
         }
-        titleCol.addView(label(this, peerName, 16f, Color.WHITE, true))
-        titleCol.addView(label(this, "محادثة مشفرة عبر Firebase", 11f, Color.parseColor("#D6F5EC")))
+        titleText = label(this, peerName, 16f, Color.WHITE, true)
+        subtitleText = label(this, "محادثة عبر Firebase", 11f, Color.parseColor("#D6F5EC"))
+        titleCol.addView(titleText)
+        titleCol.addView(subtitleText)
         bar.addView(titleCol, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        bar.addView(iconButton(this, "📞") { CallActivity.start(this, peerUid, peerName, false) })
-        bar.addView(iconButton(this, "🎥") { CallActivity.start(this, peerUid, peerName, true) })
+        bar.addView(iconButton(this, "📞") { callPeer(false) })
+        bar.addView(iconButton(this, "🎥") { callPeer(true) })
         bar.addView(iconButton(this, "⋮") { menu() })
         root.addView(bar)
+
+        relationBar = TextView(this).apply {
+            visibility = View.GONE
+            textSize = 12f
+            setTextColor(Color.WHITE)
+            setBackgroundColor(Color.parseColor("#B26A00"))
+            setPadding(dp(12), dp(9), dp(12), dp(9))
+        }
+        root.addView(relationBar)
 
         val search = editText(this, "بحث في الرسائل")
         search.visibility = View.GONE
@@ -150,18 +169,120 @@ class ChatActivity : AppCompatActivity() {
         micBtn = mic
         inputRow.addView(mic)
         inputRow.addView(iconButton(this, "➤") { sendText() })
+        this.inputRow = inputRow
         root.addView(inputRow)
         return root
     }
 
+    private fun refreshRelation() {
+        Repo.contactOf(peerUid) { c ->
+            contact = c
+            updateTitle()
+            Repo.isBlocked(peerUid) { b ->
+                blockedByMe = b
+                Repo.blockedMe(peerUid) { t ->
+                    peerBlockedMe = t
+                    applyRelationUi()
+                }
+            }
+        }
+    }
+
+    private fun updateTitle() {
+        val c = contact
+        titleText?.text = c?.label?.ifBlank { peerName } ?: peerName
+        val uname = c?.username.orEmpty()
+        subtitleText?.text = if (uname.isNotBlank()) "@" + uname else "محادثة عبر Firebase"
+    }
+
+    private fun applyRelationUi() {
+        val bar = relationBar ?: return
+        val row = inputRow ?: return
+        when {
+            blockedByMe -> {
+                bar.visibility = View.VISIBLE
+                bar.text = "🚫 لقد حظرت هذا المستخدم — اضغط لفك الحظر"
+                bar.setOnClickListener { toggleBlock(false) }
+                row.visibility = View.GONE
+            }
+            peerBlockedMe -> {
+                bar.visibility = View.VISIBLE
+                bar.text = "🚫 لا يمكنك مراسلة هذا المستخدم"
+                bar.setOnClickListener { }
+                row.visibility = View.GONE
+            }
+            contact == null -> {
+                bar.visibility = View.VISIBLE
+                bar.text = "⚠️ هذا الشخص ليس من جهات اتصالك — اضغط للإضافة أو الحظر"
+                bar.setOnClickListener { relationDialog() }
+                row.visibility = View.VISIBLE
+            }
+            else -> {
+                bar.visibility = View.GONE
+                row.visibility = View.VISIBLE
+            }
+        }
+    }
+
+    private fun relationDialog() {
+        AlertDialog.Builder(this)
+            .setTitle(peerName)
+            .setItems(arrayOf("➕ إضافة جهة اتصال", "👥 طلب صداقة", "🚫 حظر المستخدم")) { _, i ->
+                when (i) {
+                    0 -> addContactFlow()
+                    1 -> Repo.sendRequest(Person(peerUid, peerName, "", "", false, 0L)) { ok ->
+                        android.widget.Toast.makeText(this, if (ok) "تم إرسال طلب الصداقة" else "تعذر الإرسال", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                    2 -> toggleBlock(true)
+                }
+            }
+            .setNegativeButton("إلغاء", null)
+            .show()
+    }
+
+    private fun addContactFlow() {
+        askText(this, "إضافة جهة اتصال", "اكتب الاسم الذي تحبه (اختياري)") { alias ->
+            Repo.addContact(Person(peerUid, peerName, "", "", false, 0L), alias.ifBlank { peerName }) { ok ->
+                android.widget.Toast.makeText(this, if (ok) "تمت الإضافة" else "تعذر الحفظ", android.widget.Toast.LENGTH_SHORT).show()
+                refreshRelation()
+            }
+        }
+    }
+
+    private fun toggleBlock(blocked: Boolean) {
+        val target = if (blocked) true else false
+        val msg = if (target) "سيُمنع هذا المستخدم من مراسلتك، ولن ترى رسائله." else "فك الحظر والسماح بالرسائل."
+        confirm(this, if (target) "حظر المستخدم" else "فك الحظر", msg) {
+            Repo.setBlocked(peerUid, target) { refreshRelation() }
+        }
+    }
+
+    private fun callPeer(video: Boolean) {
+        if (contact == null) {
+            AlertDialog.Builder(this)
+                .setTitle(peerName)
+                .setMessage("المكالمات متاحة لجهات الاتصال فقط. أضفه أولاً.")
+                .setPositiveButton("إضافة جهة اتصال") { _, _ -> addContactFlow() }
+                .setNegativeButton("إلغاء", null)
+                .show()
+            return
+        }
+        CallActivity.start(this, peerUid, contact?.label ?: peerName, video)
+    }
+
     private fun menu() {
-        val items = arrayOf("🔍 بحث", "🖼 الوسائط والروابط", "⏳ رسائل ذاتية الاختفاء", "🔒 قفل الدردشة")
+        val items = arrayOf(
+            "🔍 بحث", "🖼 الوسائط والروابط", "⏳ رسائل ذاتية الاختفاء", "🔒 قفل الدردشة",
+            "➕ إضافة جهة اتصال", if (blockedByMe) "✅ فك الحظر" else "🚫 حظر المستخدم",
+        )
         AlertDialog.Builder(this).setTitle("خيارات").setItems(items) { _, i ->
             when (i) {
                 0 -> searchField?.visibility = if (searchField?.visibility == View.VISIBLE) View.GONE else View.VISIBLE
                 1 -> mediaMenu()
                 2 -> disappearing()
                 3 -> lockChat()
+                4 -> addContactFlow()
+                5 -> toggleBlock(!blockedByMe)
             }
         }.show()
     }
@@ -230,6 +351,10 @@ class ChatActivity : AppCompatActivity() {
     private fun expires(): Int = Fb.prefs(this).getInt("exp_" + chatId, 0)
 
     private fun send(data: Map<String, Any>) {
+        if (blockedByMe || peerBlockedMe) {
+            android.widget.Toast.makeText(this, "لا يمكن إرسال رسائل في هذه المحادثة", android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
         Repo.sendMessage(chatId, peerUid, data + ("expiresSec" to expires()))
     }
 

@@ -23,12 +23,11 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(buildRoot())
-        Fb.ensure(this) { ok ->
-            if (!ok) {
-                authError()
-                return@ensure
-            }
+        if (Fb.auth.currentUser != null) {
             afterAuth()
+        } else {
+            startActivity(Intent(this, AuthActivity::class.java))
+            finish()
         }
     }
 
@@ -100,11 +99,28 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun afterAuth() {
-        val name = Fb.prefs(this).getString("name", "").orEmpty()
-        if (name.isBlank()) {
-            askText(this, "اسمك في VOLTIR CALL", "الاسم الذي يراه الآخرون") { n ->
-                val finalName = n.ifBlank { "مستخدم" }
-                Repo.saveProfile(this, finalName, Fb.myPhone(this)) { startAll() }
+        val u = Fb.auth.currentUser
+        if (u == null) {
+            startActivity(Intent(this, AuthActivity::class.java))
+            finish()
+            return
+        }
+        if (u.email.isNullOrBlank()) {
+            startActivity(Intent(this, AuthActivity::class.java))
+            finish()
+            return
+        }
+        if (Fb.myName(this).isBlank() || Fb.prefs(this).getString("username", "").orEmpty().isBlank()) {
+            Repo.loadUser(u.uid) { p ->
+                if (p != null) {
+                    Fb.prefs(this).edit()
+                        .putString("name", p.name)
+                        .putString("username", p.username)
+                        .putString("phone", p.phone)
+                        .putString("email", u.email.orEmpty())
+                        .apply()
+                }
+                startAll()
             }
         } else {
             startAll()
@@ -159,6 +175,11 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (ready) tabs.forEach { it.onActivityResult(requestCode, resultCode, data) }
+    }
+
     fun openSettings() {
         startActivity(Intent(this, SettingsActivity::class.java))
     }
@@ -175,4 +196,5 @@ abstract class Tab(val act: MainActivity) {
     }
     abstract fun build(): View
     open fun onShown() {}
+    open fun onActivityResult(requestCode: Int, resultCode: Int, data: android.content.Intent?) {}
 }
