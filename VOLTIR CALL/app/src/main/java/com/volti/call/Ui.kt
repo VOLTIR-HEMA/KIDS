@@ -188,3 +188,67 @@ fun onlineDot(ctx: Context): View =
         }
         layoutParams = LinearLayout.LayoutParams(ctx.dp(12), ctx.dp(12))
     }
+
+/** أيقونات التنقل السفلية مرسومة برمجياً (بدون إيموجي). */
+class NavIcon(ctx: Context, private val kind: Int, startColor: Int) : View(ctx) {
+
+    var color: Int = startColor
+        set(value) {
+            field = value
+            invalidate()
+        }
+
+    private val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+        style = android.graphics.Paint.Style.FILL
+    }
+
+    init {
+        layoutParams = LinearLayout.LayoutParams(ctx.dp(25), ctx.dp(25))
+    }
+
+    override fun onDraw(canvas: android.graphics.Canvas) {
+        val w = width.toFloat()
+        val h = height.toFloat()
+        if (w <= 0f || h <= 0f) return
+        val s = minOf(w, h)
+        paint.color = color
+        paint.style = android.graphics.Paint.Style.FILL
+        when (kind) {
+            0 -> { // محادثة
+                canvas.drawRoundRect(0.10f * s, 0.14f * s, 0.90f * s, 0.72f * s, 0.16f * s, 0.16f * s, paint)
+                val tail = android.graphics.Path().apply {
+                    moveTo(0.26f * s, 0.70f * s)
+                    lineTo(0.26f * s, 0.92f * s)
+                    lineTo(0.48f * s, 0.72f * s)
+                    close()
+                }
+                canvas.drawPath(tail, paint)
+            }
+            1 -> { // تحديثات
+                paint.style = android.graphics.Paint.Style.STROKE
+                paint.strokeWidth = 0.10f * s
+                canvas.drawCircle(0.5f * s, 0.5f * s, 0.34f * s, paint)
+                paint.style = android.graphics.Paint.Style.FILL
+                canvas.drawCircle(0.5f * s, 0.5f * s, 0.10f * s, paint)
+            }
+            2 -> { // مجتمعات
+                canvas.drawCircle(0.36f * s, 0.32f * s, 0.14f * s, paint)
+                canvas.drawRoundRect(0.14f * s, 0.52f * s, 0.58f * s, 0.86f * s, 0.16f * s, 0.16f * s, paint)
+                val bg = android.graphics.Paint(paint).apply { alpha = 200 }
+                canvas.drawCircle(0.70f * s, 0.30f * s, 0.12f * s, bg)
+                canvas.drawRoundRect(0.52f * s, 0.50f * s, 0.88f * s, 0.79f * s, 0.14f * s, 0.14f * s, bg)
+            }
+            else -> { // مكالمات
+                canvas.save()
+                canvas.rotate(-38f, 0.5f * s, 0.5f * s)
+                canvas.drawRoundRect(0.14f * s, 0.35f * s, 0.36f * s, 0.65f * s, 0.10f * s, 0.10f * s, paint)
+                canvas.drawRoundRect(0.64f * s, 0.35f * s, 0.86f * s, 0.65f * s, 0.10f * s, 0.10f * s, paint)
+                canvas.drawRect(0.30f * s, 0.43f * s, 0.70f * s, 0.57f * s, paint)
+                canvas.restore()
+            }
+        }
+    }
+}
+
+fun navIcon(ctx: Context, kind: Int, color: Int): NavIcon = NavIcon(ctx, kind, color)
+

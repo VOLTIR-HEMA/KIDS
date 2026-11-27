@@ -76,7 +76,27 @@ data class StatusRow(
     val mime: String,
 )
 
-data class Community(val id: String, val name: String, val members: Int, val joined: Boolean)
+data class Community(
+    val id: String,
+    val name: String,
+    val members: Int,
+    val joined: Boolean,
+    val owner: String = "",
+    val privacy: String = "open",
+    val postPolicy: String = "all",
+    val waiting: Boolean = false,
+) {
+    val isApproval: Boolean get() = privacy == "approval"
+    val adminsOnly: Boolean get() = postPolicy == "admins"
+}
+
+data class CMsg(
+    val id: String,
+    val sender: String,
+    val senderName: String,
+    val text: String,
+    val at: Long,
+)
 
 data class Req(
     val id: String,
@@ -272,6 +292,18 @@ object Repo {
             return
         }
         Fb.db.collection(CONTACTS).document(me).collection(ITEMS).document(peer).get()
+            .addOnSuccessListener { cb(it.exists()) }
+            .addOnFailureListener { cb(false) }
+    }
+
+    /** هل أضافني هذا الشخص إلى جهات اتصاله؟ (يسمح باستقبال مكالمته). */
+    fun theyHaveMe(peer: String, cb: (Boolean) -> Unit) {
+        val me = uid()
+        if (me.isBlank() || peer.isBlank()) {
+            cb(false)
+            return
+        }
+        Fb.db.collection(CONTACTS).document(peer).collection(ITEMS).document(me).get()
             .addOnSuccessListener { cb(it.exists()) }
             .addOnFailureListener { cb(false) }
     }
@@ -555,12 +587,12 @@ object Repo {
         msg.remove("expiresSec")
         if (expiresSec > 0) msg["expiresAt"] = now + expiresSec * 1000L
         val preview = when (type) {
-            "image" -> "📷 صورة"
-            "video" -> "🎬 فيديو"
-            "audio" -> "🎤 رسالة صوتية"
-            "doc" -> "📄 مستند"
-            "location" -> "📍 موقع"
-            "contact" -> "👤 جهة اتصال"
+            "image" -> "صورة"
+            "video" -> "فيديو"
+            "audio" -> "رسالة صوتية"
+            "doc" -> "مستند"
+            "location" -> "موقع"
+            "contact" -> "جهة اتصال"
             else -> data["text"]?.toString().orEmpty()
         }
         val batch = Fb.db.batch()
@@ -854,36 +886,164 @@ object Repo {
             val out = ArrayList<Community>()
             for (d in snap.documents) {
                 val members = (d.get("members") as? List<*>)?.map { it?.toString().orEmpty() } ?: emptyList()
+                val requests = (d.get("requests") as? List<*>)?.map { it?.toString().orEmpty() } ?: emptyList()
                 out.add(
                     Community(
                         d.id,
                         d.getString("name").orEmpty().ifBlank { "مجتمع" },
                         members.size,
                         members.contains(me),
+                        d.getString("owner").orEmpty(),
+                        d.getString("privacy").orEmpty().ifBlank { "open" },
+                        d.getString("postPolicy").orEmpty().ifBlank { "all" },
+                        requests.contains(me),
                     ),
                 )
             }
-            cb(out)
+            cb(out.sortedBy { it.name })
         }
 
-    fun createCommunity(name: String) {
+    fun createCommunity(name: String, privacy: String, postPolicy: String, done: (Boolean) -> Unit) {
         val me = uid()
-        if (me.isBlank() || name.isBlank()) return
+        if (me.isBlank() || name.isBlank()) {
+            done(false)
+            return
+        }
         Fb.db.collection(Fb.COMMUNITIES).add(
             mapOf(
                 "name" to name,
                 "owner" to me,
                 "members" to listOf(me),
+                "requests" to emptyList<String>(),
+                "privacy" to privacy,
+                "postPolicy" to postPolicy,
+                "at" to System.currentTimeMillis(),
+            ),
+        ).addOnCompleteListener { done(it.isSuccessful) }
+    }
+
+    fun joinCommunity(c: Community, done: (Boolean) -> Unit) {
+        val me = uid()
+        if (me.isBlank()) {
+            done(false)
+            return
+        }
+        val ref = Fb.db.collection(Fb.COMMUNITIES).document(c.id)
+        val task = if (c.privacy == "approval") {
+            ref.set(mapOf("requests" to FieldValue.arrayUnion(me)), SetOptions.merge())
+        } else {
+            ref.set(mapOf("members" to FieldValue.arrayUnion(me)), SetOptions.merge())
+        }
+        task.addOnCompleteListener { done(it.isSuccessful) }
+    }
+
+    fun approveJoin(cid: String, user: String, done: (() -> Unit)? = null) {
+        Fb.db.collection(Fb.COMMUNITIES).document(cid).set(
+            mapOf(
+                "members" to FieldValue.arrayUnion(user),
+                "requests" to FieldValue.arrayRemove(user),
+            ),
+            SetOptions.merge(),
+        ).addOnCompleteListener { done?.invoke() }
+    }
+
+    fun declineJoin(cid: String, user: String) {
+        Fb.db.collection(Fb.COMMUNITIES).document(cid)
+            .set(mapOf("requests" to FieldValue.arrayRemove(user)), SetOptions.merge())
+    }
+
+    fun leaveCommunity(cid: String, done: (() -> Unit)? = null) {
+        val me = uid()
+        if (me.isBlank()) {
+            done?.invoke()
+            return
+        }
+        Fb.db.collection(Fb.COMMUNITIES).document(cid)
+            .set(mapOf("members" to FieldValue.arrayRemove(me)), SetOptions.merge())
+            .addOnCompleteListener { done?.invoke() }
+    }
+
+    fun updateCommunity(cid: String, privacy: String, postPolicy: String, done: (() -> Unit)? = null) {
+        Fb.db.collection(Fb.COMMUNITIES).document(cid)
+            .set(mapOf("privacy" to privacy, "postPolicy" to postPolicy), SetOptions.merge())
+            .addOnCompleteListener { done?.invoke() }
+    }
+
+    fun deleteCommunity(cid: String, done: (() -> Unit)? = null) {
+        Fb.db.collection(Fb.COMMUNITIES).document(cid).delete().addOnCompleteListener { done?.invoke() }
+    }
+
+    fun loadCommunity(cid: String, cb: (Community?) -> Unit) {
+        Fb.db.collection(Fb.COMMUNITIES).document(cid).get()
+            .addOnSuccessListener { d ->
+                if (!d.exists()) {
+                    cb(null)
+                    return@addOnSuccessListener
+                }
+                val me = uid()
+                val members = (d.get("members") as? List<*>)?.map { it?.toString().orEmpty() } ?: emptyList()
+                val requests = (d.get("requests") as? List<*>)?.map { it?.toString().orEmpty() } ?: emptyList()
+                cb(
+                    Community(
+                        d.id,
+                        d.getString("name").orEmpty().ifBlank { "مجتمع" },
+                        members.size,
+                        members.contains(me),
+                        d.getString("owner").orEmpty(),
+                        d.getString("privacy").orEmpty().ifBlank { "open" },
+                        d.getString("postPolicy").orEmpty().ifBlank { "all" },
+                        requests.contains(me),
+                    ),
+                )
+            }
+            .addOnFailureListener { cb(null) }
+    }
+
+    fun communityMemberIds(cid: String, cb: (List<String>, List<String>) -> Unit) {
+        Fb.db.collection(Fb.COMMUNITIES).document(cid).get()
+            .addOnSuccessListener { d ->
+                val members = (d.get("members") as? List<*>)?.map { it?.toString().orEmpty() } ?: emptyList()
+                val requests = (d.get("requests") as? List<*>)?.map { it?.toString().orEmpty() } ?: emptyList()
+                cb(members, requests)
+            }
+            .addOnFailureListener { cb(emptyList(), emptyList()) }
+    }
+
+    fun listenCommunityMessages(cid: String, cb: (List<CMsg>) -> Unit): ListenerRegistration =
+        Fb.db.collection(Fb.COMMUNITIES).document(cid).collection("messages")
+            .orderBy("at").limitToLast(200)
+            .addSnapshotListener { snap, _ ->
+                if (snap == null) {
+                    cb(emptyList())
+                    return@addSnapshotListener
+                }
+                cb(
+                    snap.documents.map { d ->
+                        CMsg(
+                            d.id,
+                            d.getString("sender").orEmpty(),
+                            d.getString("senderName").orEmpty(),
+                            d.getString("text").orEmpty(),
+                            d.getLong("at") ?: 0L,
+                        )
+                    },
+                )
+            }
+
+    fun sendCommunityMessage(cid: String, text: String) {
+        val me = uid()
+        val ctx = appContext ?: return
+        if (me.isBlank() || text.isBlank()) return
+        Fb.db.collection(Fb.COMMUNITIES).document(cid).collection("messages").add(
+            mapOf(
+                "sender" to me,
+                "senderName" to Fb.myName(ctx).ifBlank { "مستخدم" },
+                "text" to text,
                 "at" to System.currentTimeMillis(),
             ),
         )
     }
 
-    fun joinCommunity(id: String) {
-        val me = uid()
-        if (me.isBlank()) return
-        Fb.db.collection(Fb.COMMUNITIES).document(id).update("members", FieldValue.arrayUnion(me))
-    }
 
     fun ensureChatDoc(chatId: String, peerUid: String, peerName: String) {
         val me = uid()

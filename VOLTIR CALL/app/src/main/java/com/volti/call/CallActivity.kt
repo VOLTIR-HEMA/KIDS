@@ -129,30 +129,45 @@ class CallActivity : AppCompatActivity() {
         }
         setContentView(buildUi())
         isCaller = !incoming
-        Repo.isContact(peerUid) { ok ->
-            if (!ok) {
-                android.widget.Toast.makeText(this, "المكالمات متاحة لجهات الاتصال فقط — أضف الشخص أولاً", android.widget.Toast.LENGTH_LONG).show()
-                if (incoming && callId.isNotBlank()) {
-                    try { Fb.db.collection(Fb.CALLS).document(callId).update("state", "declined") } catch (e: Exception) { /* تجاهل */ }
+        Repo.isContact(peerUid) { mine ->
+            val allowed = { go: () -> Unit ->
+                ensurePerms()
+                if (incoming) {
+                    if (callId.isBlank()) {
+                        finish()
+                        return@allowed
+                    }
+                    doc = Fb.db.collection(Fb.CALLS).document(callId)
+                    setupPeer()
+                    watchCallDoc()
+                    watchCandidates()
+                    statusText?.text = "مكالمة واردة — جارٍ الرد"
+                } else {
+                    createCall()
                 }
+                startTicker()
+            }
+            if (mine) {
+                allowed {}
+                return@isContact
+            }
+            if (!incoming) {
+                android.widget.Toast.makeText(this, "المكالمات متاحة لجهات الاتصال فقط — أضف الشخص أولاً", android.widget.Toast.LENGTH_LONG).show()
                 finish()
                 return@isContact
             }
-            ensurePerms()
-            if (incoming) {
-                if (callId.isBlank()) {
+            // مكالمة واردة: مسموحة إذا كان المتصل أضافني لجهات اتصاله أيضاً
+            Repo.theyHaveMe(peerUid) { theirs ->
+                if (theirs) {
+                    allowed {}
+                } else {
+                    android.widget.Toast.makeText(this, "متصل غير موجود في جهات اتصالك — تم رفض المكالمة", android.widget.Toast.LENGTH_LONG).show()
+                    if (callId.isNotBlank()) {
+                        try { Fb.db.collection(Fb.CALLS).document(callId).update("state", "declined") } catch (e: Exception) { /* تجاهل */ }
+                    }
                     finish()
-                    return@isContact
                 }
-                doc = Fb.db.collection(Fb.CALLS).document(callId)
-                setupPeer()
-                watchCallDoc()
-                watchCandidates()
-                statusText?.text = "مكالمة واردة — جارٍ الرد"
-            } else {
-                createCall()
             }
-            startTicker()
         }
     }
 

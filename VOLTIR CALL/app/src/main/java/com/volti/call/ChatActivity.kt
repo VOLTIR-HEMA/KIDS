@@ -127,9 +127,9 @@ class ChatActivity : AppCompatActivity() {
         titleCol.addView(titleText)
         titleCol.addView(subtitleText)
         bar.addView(titleCol, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        bar.addView(iconButton(this, "📞") { callPeer(false) })
-        bar.addView(iconButton(this, "🎥") { callPeer(true) })
-        bar.addView(iconButton(this, "⋮") { menu() })
+        bar.addView(barAction("صوتية") { callPeer(false) })
+        bar.addView(barAction("مرئية") { callPeer(true) })
+        bar.addView(barAction("خيارات") { menu() })
         root.addView(bar)
 
         relationBar = TextView(this).apply {
@@ -165,7 +165,7 @@ class ChatActivity : AppCompatActivity() {
         val field = editText(this, "اكتب رسالة")
         input = field
         inputRow.addView(field, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        val mic = iconButton(this, "🎤") { toggleRecording() }
+        val mic = barAction("تسجيل") { toggleRecording() }
         micBtn = mic
         inputRow.addView(mic)
         inputRow.addView(iconButton(this, "➤") { sendText() })
@@ -207,19 +207,19 @@ class ChatActivity : AppCompatActivity() {
         when {
             blockedByMe -> {
                 bar.visibility = View.VISIBLE
-                bar.text = "🚫 لقد حظرت هذا المستخدم — اضغط لفك الحظر"
+                bar.text = "لقد حظرت هذا المستخدم — اضغط لفك الحظر"
                 bar.setOnClickListener { toggleBlock(false) }
                 row.visibility = View.GONE
             }
             peerBlockedMe -> {
                 bar.visibility = View.VISIBLE
-                bar.text = "🚫 لا يمكنك مراسلة هذا المستخدم"
+                bar.text = "لا يمكنك مراسلة هذا المستخدم"
                 bar.setOnClickListener { }
                 row.visibility = View.GONE
             }
             contact == null -> {
                 bar.visibility = View.VISIBLE
-                bar.text = "⚠️ هذا الشخص ليس من جهات اتصالك — اضغط للإضافة أو الحظر"
+                bar.text = "هذا الشخص ليس من جهات اتصالك — اضغط للإضافة أو الحظر"
                 bar.setOnClickListener { relationDialog() }
                 row.visibility = View.VISIBLE
             }
@@ -233,7 +233,7 @@ class ChatActivity : AppCompatActivity() {
     private fun relationDialog() {
         AlertDialog.Builder(this)
             .setTitle(peerName)
-            .setItems(arrayOf("➕ إضافة جهة اتصال", "👥 طلب صداقة", "🚫 حظر المستخدم")) { _, i ->
+            .setItems(arrayOf("إضافة جهة اتصال", "طلب صداقة", "حظر المستخدم")) { _, i ->
                 when (i) {
                     0 -> addContactFlow()
                     1 -> Repo.sendRequest(Person(peerUid, peerName, "", "", false, 0L)) { ok ->
@@ -263,8 +263,17 @@ class ChatActivity : AppCompatActivity() {
         }
     }
 
-    private fun callPeer(video: Boolean) {
-        if (contact == null) {
+    private fun barAction(text: String, onClick: () -> Unit): TextView =
+        TextView(this).apply {
+            this.text = text
+            textSize = 12f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            setPadding(dp(8), dp(6), dp(8), dp(6))
+            setOnClickListener { onClick() }
+        }
+
+    private fun callPeer(video: Boolean) {        if (contact == null) {
             AlertDialog.Builder(this)
                 .setTitle(peerName)
                 .setMessage("المكالمات متاحة لجهات الاتصال فقط. أضفه أولاً.")
@@ -278,8 +287,8 @@ class ChatActivity : AppCompatActivity() {
 
     private fun menu() {
         val items = arrayOf(
-            "🔍 بحث", "🖼 الوسائط والروابط", "⏳ رسائل ذاتية الاختفاء", "🔒 قفل الدردشة",
-            "➕ إضافة جهة اتصال", if (blockedByMe) "✅ فك الحظر" else "🚫 حظر المستخدم",
+            "بحث", "الوسائط والروابط", "رسائل ذاتية الاختفاء", "قفل الدردشة",
+            "إضافة جهة اتصال", if (blockedByMe) "فك الحظر" else "حظر المستخدم",
         )
         AlertDialog.Builder(this).setTitle("خيارات").setItems(items) { _, i ->
             when (i) {
@@ -371,7 +380,7 @@ class ChatActivity : AppCompatActivity() {
     }
 
     private fun attachMenu() {
-        val items = arrayOf("🖼 صورة", "📄 مستند", "📍 موقع", "👤 جهة اتصال")
+        val items = arrayOf("صورة", "مستند", "موقع", "جهة اتصال")
         AlertDialog.Builder(this).setTitle("إرفاق").setItems(items) { _, i ->
             when (i) {
                 0 -> pickImage.launch("image/*")
@@ -539,15 +548,15 @@ class ChatActivity : AppCompatActivity() {
                     if (bmp != null) iv.setImageBitmap(bmp) else Glide.with(this@ChatActivity).load(m.url).into(iv)
                     holder.content.addView(iv)
                 }
-                "video" -> holder.content.addView(mediaLine("🎬 فيديو — اضغط للفتح") { openUrl(m.url) })
-                "audio" -> holder.content.addView(mediaLine("🎤 رسالة صوتية — تشغيل") { playMsg(m) })
-                "doc" -> holder.content.addView(mediaLine("📄 " + (m.name.ifBlank { "مستند" })) { openDoc(m) })
-                "location" -> holder.content.addView(mediaLine("📍 موقع — فتح الخريطة") {
+                "video" -> holder.content.addView(mediaLine("فيديو — اضغط للفتح") { openUrl(m.url) })
+                "audio" -> holder.content.addView(mediaLine("رسالة صوتية — تشغيل") { playMsg(m) })
+                "doc" -> holder.content.addView(mediaLine(m.name.ifBlank { "مستند" }) { openDoc(m) })
+                "location" -> holder.content.addView(mediaLine("موقع — فتح الخريطة") {
                     try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("geo:" + m.lat + "," + m.lng + "?q=" + m.lat + "," + m.lng))) } catch (e: Exception) { /* تجاهل */ }
                 })
                 "contact" -> {
                     val t = TextView(this@ChatActivity).apply {
-                        text = "👤 " + m.contactName + "\n" + m.contactPhone
+                        text = m.contactName + "\n" + m.contactPhone
                         setTextColor(Color.parseColor("#111B21"))
                         textSize = 15f
                         setPadding(0, dp(2), 0, dp(2))

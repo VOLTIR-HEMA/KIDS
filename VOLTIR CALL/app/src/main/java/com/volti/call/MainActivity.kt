@@ -23,12 +23,27 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(buildRoot())
-        if (Fb.auth.currentUser != null) {
-            afterAuth()
-        } else {
-            startActivity(Intent(this, AuthActivity::class.java))
-            finish()
+        route()
+    }
+
+    private fun route() {
+        val u = Fb.auth.currentUser
+        if (u == null || u.email.isNullOrBlank()) {
+            goAuth()
+            return
         }
+        u.reload().addOnCompleteListener {
+            if (!u.isEmailVerified) {
+                goAuth()
+            } else {
+                afterAuth()
+            }
+        }
+    }
+
+    private fun goAuth() {
+        startActivity(Intent(this, AuthActivity::class.java))
+        finish()
     }
 
     private fun buildRoot(): View {
@@ -45,23 +60,20 @@ class MainActivity : AppCompatActivity() {
             setBackgroundColor(Color.WHITE)
             setPadding(0, dp(6), 0, dp(8))
         }
-        val defs = listOf("💬" to "الدردشات", "🔄" to "التحديثات", "👥" to "المجتمعات", "📞" to "المكالمات")
+        val defs = listOf("الدردشات", "التحديثات", "المجتمعات", "المكالمات")
         val items = ArrayList<LinearLayout>()
         for ((i, d) in defs.withIndex()) {
             val item = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
                 gravity = Gravity.CENTER
                 isClickable = true
-                setPadding(0, dp(6), 0, dp(4))
+                setPadding(0, dp(8), 0, dp(6))
+                addView(navIcon(this@MainActivity, i, Color.parseColor("#667781")))
                 addView(TextView(this@MainActivity).apply {
-                    text = d.first
-                    textSize = 20f
-                    gravity = Gravity.CENTER
-                })
-                addView(TextView(this@MainActivity).apply {
-                    text = d.second
+                    text = d
                     textSize = 11f
                     gravity = Gravity.CENTER
+                    setPadding(0, dp(3), 0, 0)
                 })
             }
             item.setOnClickListener { showTab(i) }
@@ -101,13 +113,7 @@ class MainActivity : AppCompatActivity() {
     private fun afterAuth() {
         val u = Fb.auth.currentUser
         if (u == null) {
-            startActivity(Intent(this, AuthActivity::class.java))
-            finish()
-            return
-        }
-        if (u.email.isNullOrBlank()) {
-            startActivity(Intent(this, AuthActivity::class.java))
-            finish()
+            goAuth()
             return
         }
         if (Fb.myName(this).isBlank() || Fb.prefs(this).getString("username", "").orEmpty().isBlank()) {
@@ -156,7 +162,7 @@ class MainActivity : AppCompatActivity() {
         content.addView(tabs[i].view(), FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         for ((n, item) in navItems.withIndex()) {
             val color = if (n == i) Color.parseColor("#00A884") else Color.parseColor("#667781")
-            (item.getChildAt(0) as TextView).setTextColor(color)
+            (item.getChildAt(0) as NavIcon).color = color
             (item.getChildAt(1) as TextView).setTextColor(color)
             item.setBackgroundColor(if (n == i) Color.parseColor("#E7F8F3") else Color.TRANSPARENT)
         }
@@ -165,7 +171,12 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        if (ready) Repo.setOnline(true)
+        if (!ready) return
+        if (Fb.auth.currentUser?.isEmailVerified != true) {
+            goAuth()
+            return
+        }
+        Repo.setOnline(true)
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
@@ -182,6 +193,10 @@ class MainActivity : AppCompatActivity() {
 
     fun openSettings() {
         startActivity(Intent(this, SettingsActivity::class.java))
+    }
+
+    fun openContacts() {
+        startActivity(Intent(this, ContactsActivity::class.java))
     }
 }
 

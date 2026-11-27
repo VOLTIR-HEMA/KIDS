@@ -30,7 +30,7 @@ class NotifyService : Service() {
 
         fun start(ctx: Context) {
             try {
-                ContextCompat.startForegroundService(ctx, Intent(ctx, NotifyService::class.java))
+                ctx.startService(Intent(ctx, NotifyService::class.java))
             } catch (e: Exception) { /* تجاهل */ }
         }
     }
@@ -45,18 +45,6 @@ class NotifyService : Service() {
     override fun onCreate() {
         super.onCreate()
         createChannels()
-        val n = NotificationCompat.Builder(this, CH_SERVICE)
-            .setSmallIcon(R.drawable.ic_launcher)
-            .setContentTitle("VOLTIR CALL يعمل")
-            .setContentText("جاهز لاستقبال المكالمات والرسائل")
-            .setPriority(NotificationCompat.PRIORITY_MIN)
-            .setOngoing(true)
-            .build()
-        try {
-            ServiceCompat.startForeground(this, ID_SERVICE, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
-        } catch (e: Exception) {
-            try { startForeground(ID_SERVICE, n) } catch (e2: Exception) { /* تجاهل */ }
-        }
         if (Fb.auth.currentUser == null) {
             Fb.ensure(this) { ok -> if (ok) listen() }
         } else {
@@ -132,12 +120,12 @@ class NotifyService : Service() {
         val pi = PendingIntent.getActivity(this, d.id.hashCode(), intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val n = NotificationCompat.Builder(this, CH_CALLS)
             .setSmallIcon(R.drawable.ic_launcher)
-            .setContentTitle(if (video) "🎥 مكالمة مرئية واردة" else "📞 مكالمة صوتية واردة")
+            .setContentTitle(if (video) "مكالمة مرئية واردة" else "مكالمة صوتية واردة")
             .setContentText(name)
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setCategory(NotificationCompat.CATEGORY_CALL)
             .setAutoCancel(true)
-            .setOngoing(true)
+            .setTimeoutAfter(60_000)
             .setContentIntent(pi)
             .build()
         post(d.id.hashCode(), n)

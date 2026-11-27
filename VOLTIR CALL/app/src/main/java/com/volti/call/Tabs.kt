@@ -51,6 +51,18 @@ private fun Context.toast(m: String) {
     android.widget.Toast.makeText(this, m, android.widget.Toast.LENGTH_SHORT).show()
 }
 
+private fun actionButton(ctx: Context, text: String, onClick: () -> Unit): TextView =
+    TextView(ctx).apply {
+        this.text = text
+        textSize = 13f
+        gravity = Gravity.CENTER
+        setTextColor(Color.parseColor("#008069"))
+        background = roundBg(Color.parseColor("#E7F8F3"), ctx.dp(18).toFloat())
+        setPadding(ctx.dp(4), ctx.dp(9), ctx.dp(4), ctx.dp(9))
+        isClickable = true
+        setOnClickListener { onClick() }
+    }
+
 /** عرض حالة (نص/صورة/فيديو) للطرفين. */
 private fun viewStatusRow(ctx: Context, s: StatusRow) {
     when (s.type) {
@@ -128,29 +140,34 @@ class ChatsTab(act: MainActivity) : Tab(act) {
                 ctx, "VOLTIR CALL", "مكالمات ودردشة",
                 null,
                 listOf(
-                    iconButton(ctx, "🔍") {
-                        searchBox?.visibility = if (searchBox?.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+                    label(ctx, "بحث", 14f, Color.WHITE).apply {
+                        setPadding(ctx.dp(10), ctx.dp(6), ctx.dp(10), ctx.dp(6))
+                        setOnClickListener {
+                            searchBox?.visibility = if (searchBox?.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+                        }
                     },
-                    iconButton(ctx, "⚙") { act.openSettings() },
+                    label(ctx, "الإعدادات", 14f, Color.WHITE).apply {
+                        setPadding(ctx.dp(10), ctx.dp(6), ctx.dp(6), ctx.dp(6))
+                        setOnClickListener { act.openSettings() }
+                    },
                 ),
             ),
         )
 
-        val u = Fb.auth.currentUser
-        if (u != null && !u.isEmailVerified) {
-            val bar = TextView(ctx).apply {
-                text = "✉️ بريدك غير مؤكد — اضغط لإرسال رابط التأكيد"
-                textSize = 12f
-                setTextColor(Color.WHITE)
-                setBackgroundColor(Color.parseColor("#B26A00"))
-                setPadding(ctx.dp(12), ctx.dp(8), ctx.dp(12), ctx.dp(8))
-                setOnClickListener {
-                    try { u.sendEmailVerification() } catch (e: Exception) { /* تجاهل */ }
-                    ctx.toast("تم إرسال رابط التأكيد إلى بريدك")
-                }
-            }
-            col.addView(bar)
+        val actions = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(ctx.dp(10), ctx.dp(8), ctx.dp(10), ctx.dp(4))
         }
+        val newChat = actionButton("محادثة جديدة") { newContactDialog(false) }
+        val newCall = actionButton("مكالمة") { newContactDialog(true) }
+        val contactsBtn = actionButton("جهات الاتصال") { act.openContacts() }
+        for (b in listOf(newChat, newCall, contactsBtn)) {
+            actions.addView(b, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                marginStart = ctx.dp(2)
+                marginEnd = ctx.dp(2)
+            })
+        }
+        col.addView(actions)
 
         requestsBar = TextView(ctx).apply {
             visibility = View.GONE
@@ -194,7 +211,7 @@ class ChatsTab(act: MainActivity) : Tab(act) {
         col.addView(list, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
 
         emptyView = TextView(ctx).apply {
-            text = "لا توجد محادثات أو جهات اتصال بعد\nاضغط «رسالة جديدة» وابحث باسم المستخدم"
+            text = "لا توجد محادثات بعد\nاضغط «محادثة جديدة» وابحث باسم المستخدم"
             gravity = Gravity.CENTER
             setTextColor(Color.parseColor("#667781"))
             visibility = View.GONE
@@ -202,14 +219,6 @@ class ChatsTab(act: MainActivity) : Tab(act) {
         col.addView(emptyView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ctx.dp(64)))
 
         root.addView(col, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-
-        val fab = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.END }
-        fab.addView(pillButton(ctx, "💬 رسالة جديدة") { newContactDialog(false) })
-        fab.addView(gap(ctx, 0, 8))
-        fab.addView(pillButton(ctx, "📞 مكالمة جديدة") { newContactDialog(true) })
-        root.addView(fab, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.END).apply {
-            setMargins(0, 0, ctx.dp(14), ctx.dp(14))
-        })
 
         Repo.listenChats { list2 ->
             chats = list2
@@ -229,7 +238,7 @@ class ChatsTab(act: MainActivity) : Tab(act) {
         Repo.listenRequests { r ->
             requests = r
             requestsBar?.visibility = if (r.isEmpty()) View.GONE else View.VISIBLE
-            requestsBar?.text = "👥 لديك " + r.size + " طلب صداقة — اضغط للمراجعة"
+            requestsBar?.text = "لديك " + r.size + " طلب صداقة — اضغط للمراجعة"
         }
         return root
     }
@@ -282,12 +291,12 @@ class ChatsTab(act: MainActivity) : Tab(act) {
     private fun preview(c: Chat): String {
         val tick = if (c.lastSender == Repo.uid()) "✓✓ " else ""
         return tick + when (c.lastType) {
-            "image" -> "📷 صورة"
-            "video" -> "🎬 فيديو"
-            "audio" -> "🎤 رسالة صوتية"
-            "doc" -> "📄 مستند"
-            "location" -> "📍 موقع"
-            "contact" -> "👤 جهة اتصال"
+            "image" -> "صورة"
+            "video" -> "فيديو"
+            "audio" -> "رسالة صوتية"
+            "doc" -> "مستند"
+            "location" -> "موقع"
+            "contact" -> "جهة اتصال"
             else -> c.lastText
         }
     }
@@ -295,14 +304,50 @@ class ChatsTab(act: MainActivity) : Tab(act) {
     private fun renderStatuses() {
         val strip = statusStrip ?: return
         strip.removeAllViews()
-        val mine = avatarView(ctx, Fb.myName(ctx).ifBlank { "أنا" }, 54)
-        strip.addView(statusCell(mine, "حالتي", false) {
-            askText(ctx, "نشر حالة نصية", "اكتب حالتك (تختفي بعد 24 ساعة)") { text ->
-                if (text.isNotBlank()) {
-                    Repo.postStatus(text, 0xFF00A884.toInt())
-                    ctx.toast("تم نشر الحالة")
+        val mineAvatar = avatarView(ctx, Fb.myName(ctx).ifBlank { "أنا" }, 54)
+        val mineBox = FrameLayout(ctx).apply {
+            addView(mineAvatar)
+            addView(
+                TextView(ctx).apply {
+                    text = "+"
+                    textSize = 13f
+                    setTextColor(Color.WHITE)
+                    gravity = Gravity.CENTER
+                    background = GradientDrawable().apply {
+                        shape = GradientDrawable.OVAL
+                        setColor(Color.parseColor("#00A884"))
+                        setStroke(ctx.dp(2), Color.WHITE)
+                    }
+                },
+                FrameLayout.LayoutParams(ctx.dp(20), ctx.dp(20)).apply {
+                    leftMargin = ctx.dp(36)
+                    topMargin = ctx.dp(36)
+                },
+            )
+        }
+        strip.addView(statusCell(mineBox, "حالتي", false) {
+            AlertDialog.Builder(ctx)
+                .setTitle("إضافة تحديث")
+                .setItems(arrayOf("حالة نصية", "صورة مع تعليق", "فيديو مع تعليق (حتى دقيقتين)")) { _, i ->
+                    when (i) {
+                        0 -> askText(ctx, "نشر حالة نصية", "اكتب حالتك (تختفي بعد 24 ساعة)") { text ->
+                            if (text.isNotBlank()) {
+                                Repo.postStatus(text, 0xFF00A884.toInt())
+                                ctx.toast("تم نشر الحالة")
+                            }
+                        }
+                        1 -> act.startActivityForResult(
+                            Intent(Intent.ACTION_GET_CONTENT).setType("image/*").addCategory(Intent.CATEGORY_OPENABLE),
+                            501,
+                        )
+                        2 -> act.startActivityForResult(
+                            Intent(Intent.ACTION_GET_CONTENT).setType("video/*").addCategory(Intent.CATEGORY_OPENABLE),
+                            502,
+                        )
+                    }
                 }
-            }
+                .setNegativeButton("إلغاء", null)
+                .show()
         })
         val seen = HashSet<String>()
         for (s in statuses) {
@@ -475,7 +520,7 @@ class ChatsTab(act: MainActivity) : Tab(act) {
         AlertDialog.Builder(ctx)
             .setTitle(p.name)
             .setMessage(info)
-            .setItems(arrayOf("💬 محادثة", "➕ إضافة جهة اتصال", "👥 طلب صداقة", "📞 مكالمة صوتية", "🎥 مكالمة مرئية")) { _, i ->
+            .setItems(arrayOf("محادثة", "إضافة جهة اتصال", "طلب صداقة", "مكالمة صوتية", "مكالمة مرئية")) { _, i ->
                 when (i) {
                     0 -> openChat(p.uid, p.label)
                     1 -> addContactDialog(p)
@@ -508,7 +553,7 @@ class ChatsTab(act: MainActivity) : Tab(act) {
         }
         AlertDialog.Builder(ctx)
             .setTitle("مكالمة مع " + p.label)
-            .setItems(arrayOf("📞 مكالمة صوتية", "🎥 مكالمة مرئية")) { _, i ->
+            .setItems(arrayOf("مكالمة صوتية", "مكالمة مرئية")) { _, i ->
                 CallActivity.start(ctx, p.uid, p.label, i == 1)
             }
             .setNegativeButton("إلغاء", null)
@@ -555,7 +600,12 @@ class UpdatesTab(act: MainActivity) : Tab(act) {
 
     override fun build(): View {
         val root = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(Color.WHITE) }
-        root.addView(topBar(ctx, "التحديثات", "حالات نصية وصور وفيديو (حتى دقيقتين)", null, listOf(iconButton(ctx, "＋") { composer() })))
+        root.addView(topBar(ctx, "التحديثات", "حالات نصية وصور وفيديو (حتى دقيقتين)", null, listOf(
+            label(ctx, "نشر", 14f, Color.WHITE).apply {
+                setPadding(ctx.dp(10), ctx.dp(6), ctx.dp(6), ctx.dp(6))
+                setOnClickListener { composer() }
+            },
+        )))
         val list = RecyclerView(ctx).apply { layoutManager = LinearLayoutManager(ctx) }
         adapter = object : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
             inner class VH(v: LinearLayout) : RecyclerView.ViewHolder(v) {
@@ -588,8 +638,8 @@ class UpdatesTab(act: MainActivity) : Tab(act) {
                 h.avatar.background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(s.color) }
                 h.name.text = s.name + (if (s.uid == Repo.uid()) " (أنا)" else "")
                 h.body.text = when (s.type) {
-                    "image" -> "📷 صورة" + (if (s.text.isNotBlank()) " — " + s.text else "")
-                    "video" -> "🎬 فيديو" + (if (s.text.isNotBlank()) " — " + s.text else "")
+                    "image" -> "صورة" + (if (s.text.isNotBlank()) " — " + s.text else "")
+                    "video" -> "فيديو" + (if (s.text.isNotBlank()) " — " + s.text else "")
                     else -> s.text
                 }
                 h.time.text = Fb.dayClock(s.at)
@@ -610,7 +660,7 @@ class UpdatesTab(act: MainActivity) : Tab(act) {
     }
 
     private fun composer() {
-        val items = arrayOf("✍️ حالة نصية", "🖼 صورة مع تعليق", "🎬 فيديو مع تعليق (حتى دقيقتين)")
+        val items = arrayOf("حالة نصية", "صورة مع تعليق", "فيديو مع تعليق (حتى دقيقتين)")
         AlertDialog.Builder(ctx).setTitle("إضافة تحديث").setItems(items) { _, i ->
             when (i) {
                 0 -> askText(ctx, "حالة نصية", "اكتب حالتك (تختفي بعد 24 ساعة)") { text ->
@@ -710,14 +760,18 @@ class CommunitiesTab(act: MainActivity) : Tab(act) {
     private val ctx: Context get() = act
     private var rows: List<Community> = emptyList()
     private var adapter: RecyclerView.Adapter<*>? = null
+    private var emptyView: TextView? = null
 
     override fun build(): View {
         val root = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(Color.WHITE) }
-        root.addView(topBar(ctx, "المجتمعات", "أنشئ مجتمعاً وادعُ أصدقاءك", null, listOf(iconButton(ctx, "＋") {
-            askText(ctx, "مجتمع جديد", "اسم المجتمع") { n ->
-                if (n.isNotBlank()) Repo.createCommunity(n)
-            }
-        })))
+        root.addView(
+            topBar(ctx, "المجتمعات", "أنشئ مجتمعاً أو انضم لمجتمع", null, listOf(
+                label(ctx, "جديد", 14f, Color.WHITE).apply {
+                    setPadding(ctx.dp(10), ctx.dp(6), ctx.dp(6), ctx.dp(6))
+                    setOnClickListener { createFlow() }
+                },
+            )),
+        )
         val list = RecyclerView(ctx).apply { layoutManager = LinearLayoutManager(ctx) }
         adapter = object : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
             inner class VH(v: LinearLayout) : RecyclerView.ViewHolder(v) {
@@ -728,7 +782,7 @@ class CommunitiesTab(act: MainActivity) : Tab(act) {
             }
 
             override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
-                val av = avatarView(ctx, "👥", 46)
+                val av = avatarView(ctx, "", 46)
                 val col = LinearLayout(ctx).apply {
                     orientation = LinearLayout.VERTICAL
                     setPadding(ctx.dp(10), 0, ctx.dp(8), 0)
@@ -746,23 +800,85 @@ class CommunitiesTab(act: MainActivity) : Tab(act) {
             override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
                 val h = holder as VH
                 val c = rows[position]
+                h.avatar.text = c.name.take(1).uppercase()
+                h.avatar.background = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(nameColor(c.name))
+                }
                 h.name.text = c.name
-                h.sub.text = c.members.toString() + " عضو"
-                h.join.text = if (c.joined) "عضو ✓" else "انضمام"
+                val policy = if (c.privacy == "approval") "بموافقة" else "مفتوح"
+                h.sub.text = c.members.toString() + " عضو · " + policy +
+                    (if (c.owner == Repo.uid()) " · أنت المشرف" else "")
+                h.join.text = when {
+                    c.owner == Repo.uid() -> "إدارة"
+                    c.joined -> "عضو"
+                    c.waiting -> "بانتظار الموافقة"
+                    else -> "انضمام"
+                }
                 h.join.setOnClickListener {
-                    if (!c.joined) {
-                        Repo.joinCommunity(c.id)
-                        ctx.toast("تم الانضمام")
+                    if (!c.joined && !c.waiting) {
+                        Repo.joinCommunity(c) { ok ->
+                            ctx.toast(
+                                when {
+                                    !ok -> "تعذر الانضمام"
+                                    c.privacy == "approval" -> "تم إرسال طلب الانضمام"
+                                    else -> "تم الانضمام"
+                                },
+                            )
+                        }
+                    } else {
+                        openCommunity(c)
                     }
                 }
+                h.itemView.setOnClickListener { openCommunity(c) }
             }
         }
         list.adapter = adapter
         root.addView(list, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-        Repo.listenCommunities { r -> rows = r; adapter?.notifyDataSetChanged() }
+        emptyView = TextView(ctx).apply {
+            text = "لا توجد مجتمعات بعد\nاضغط «جديد» لإنشاء مجتمع"
+            gravity = Gravity.CENTER
+            setTextColor(Color.parseColor("#667781"))
+            visibility = View.GONE
+            setPadding(ctx.dp(16), ctx.dp(10), ctx.dp(16), ctx.dp(10))
+        }
+        root.addView(emptyView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ctx.dp(60)))
+        Repo.listenCommunities { r ->
+            rows = r
+            adapter?.notifyDataSetChanged()
+            emptyView?.visibility = if (r.isEmpty()) View.VISIBLE else View.GONE
+        }
         return root
     }
+
+    private fun openCommunity(c: Community) {
+        ctx.startActivity(Intent(ctx, CommunityActivity::class.java).putExtra("cid", c.id))
+    }
+
+    private fun createFlow() {
+        askText(ctx, "مجتمع جديد", "اسم المجتمع") { name ->
+            if (name.isBlank()) return@askText
+            AlertDialog.Builder(ctx)
+                .setTitle("طريقة الانضمام")
+                .setItems(arrayOf("مفتوح — أي شخص ينضم مباشرة", "بموافقة — تحتاج موافقتك")) { _, i ->
+                    val privacy = if (i == 1) "approval" else "open"
+                    AlertDialog.Builder(ctx)
+                        .setTitle("من يمكنه إرسال الرسائل؟")
+                        .setItems(arrayOf("الجميع", "المشرف فقط (الإعلانات)")) { _, j ->
+                            val post = if (j == 1) "admins" else "all"
+                            Repo.createCommunity(name, privacy, post) { ok ->
+                                ctx.toast(if (ok) "تم إنشاء المجتمع" else "تعذر الإنشاء — راجع القواعد")
+                            }
+                        }
+                        .setNegativeButton("إلغاء", null)
+                        .show()
+                }
+                .setNegativeButton("إلغاء", null)
+                .show()
+        }
+    }
 }
+
 
 // ------------------------------------------------------------------ المكالمات
 
@@ -774,18 +890,26 @@ class CallsTab(act: MainActivity) : Tab(act) {
 
     override fun build(): View {
         val root = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(Color.WHITE) }
-        root.addView(topBar(ctx, "المكالمات", "صوتية ومرئية", null, listOf(iconButton(ctx, "⚙") { act.openSettings() })))
+        root.addView(topBar(ctx, "المكالمات", "صوتية ومرئية", null, listOf(
+            label(ctx, "الإعدادات", 14f, Color.WHITE).apply {
+                setPadding(ctx.dp(10), ctx.dp(6), ctx.dp(6), ctx.dp(6))
+                setOnClickListener { act.openSettings() }
+            },
+        )))
 
         val quick = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(ctx.dp(8), ctx.dp(8), ctx.dp(8), ctx.dp(8))
         }
-        val callBtn = quickCell("📞", "مكالمة") { pickPerson { p -> chooseType(p) } }
-        val schedBtn = quickCell("🗓", "جدولة") { schedule() }
-        val padBtn = quickCell("⌨️", "لوحة أرقام") { dialPad() }
-        val favBtn = quickCell("⭐", "مفضلة") { favorites() }
+        val callBtn = quickCell("مكالمة") { pickPerson { p -> chooseType(p) } }
+        val schedBtn = quickCell("جدولة") { schedule() }
+        val padBtn = quickCell("لوحة أرقام") { dialPad() }
+        val favBtn = quickCell("مفضلة") { favorites() }
         for (b in listOf(callBtn, schedBtn, padBtn, favBtn)) {
-            quick.addView(b, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            quick.addView(b, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                marginStart = ctx.dp(2)
+                marginEnd = ctx.dp(2)
+            })
         }
         root.addView(quick)
 
@@ -833,7 +957,7 @@ class CallsTab(act: MainActivity) : Tab(act) {
                 h.sub.text = kind + " · " + Fb.dayClock(c.at) + dur
                 h.itemView.setOnClickListener {
                     if (contact == null) {
-                        ctx.toast("أضف جهة الاتصال أولاً لتتمكن من الاتصال")
+                        offerAddAndCall(c.peer, c.peerName, c.video)
                     } else {
                         CallActivity.start(ctx, contact.uid, contact.label, c.video)
                     }
@@ -848,17 +972,16 @@ class CallsTab(act: MainActivity) : Tab(act) {
         return root
     }
 
-    private fun quickCell(icon: String, text: String, onClick: () -> Unit): LinearLayout {
+    private fun quickCell(text: String, onClick: () -> Unit): LinearLayout {
         return LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setPadding(ctx.dp(4), ctx.dp(8), ctx.dp(4), ctx.dp(8))
+            setPadding(ctx.dp(4), ctx.dp(12), ctx.dp(4), ctx.dp(12))
             isClickable = true
-            setBackground(roundBg(Color.parseColor("#E7F8F3"), ctx.dp(14).toFloat()))
-            addView(TextView(ctx).apply { this.text = icon; textSize = 20f; gravity = Gravity.CENTER })
+            setBackground(roundBg(Color.parseColor("#E7F8F3"), ctx.dp(12).toFloat()))
             addView(TextView(ctx).apply {
                 this.text = text
-                textSize = 12f
+                textSize = 13f
                 setTextColor(Color.parseColor("#008069"))
                 gravity = Gravity.CENTER
             })
@@ -868,7 +991,12 @@ class CallsTab(act: MainActivity) : Tab(act) {
 
     private fun pickPerson(cb: (Person) -> Unit) {
         if (people.isEmpty()) {
-            ctx.toast("لا توجد جهات اتصال — أضف جهة اتصال من تبويب الدردشات")
+            AlertDialog.Builder(ctx)
+                .setTitle("لا توجد جهات اتصال")
+                .setMessage("ابحث عن شخص مسجل برقم الهاتف أو اسم المستخدم، ثم أضفه لجهات اتصالك واتصل به.")
+                .setPositiveButton("بحث الآن") { _, _ -> dialPad() }
+                .setNegativeButton("جهات الاتصال") { _, _ -> act.openContacts() }
+                .show()
             return
         }
         val names = people.map { it.label + (if (it.online) "  ●" else "") }.toTypedArray()
@@ -878,13 +1006,34 @@ class CallsTab(act: MainActivity) : Tab(act) {
     private fun chooseType(p: Person) {
         AlertDialog.Builder(ctx)
             .setTitle(p.label)
-            .setItems(arrayOf("📞 مكالمة صوتية", "🎥 مكالمة مرئية", "💬 محادثة")) { _, i ->
+            .setItems(arrayOf("مكالمة صوتية", "مكالمة مرئية", "محادثة")) { _, i ->
                 when (i) {
                     0 -> CallActivity.start(ctx, p.uid, p.label, false)
                     1 -> CallActivity.start(ctx, p.uid, p.label, true)
                     else -> ChatsTab.startChat(ctx, p)
                 }
             }
+            .show()
+    }
+
+    /** إضافة جهة الاتصال ثم بدء المكالمة مباشرة. */
+    private fun offerAddAndCall(peer: String, name: String, video: Boolean) {
+        AlertDialog.Builder(ctx)
+            .setTitle(name)
+            .setMessage("هذا الشخص ليس من جهات اتصالك. إضافته تسمح بالمكالمات.")
+            .setPositiveButton("إضافة واتصال") { _, _ ->
+                Repo.loadUser(peer) { p ->
+                    if (p == null) {
+                        ctx.toast("تعذر العثور على الحساب")
+                        return@loadUser
+                    }
+                    Repo.addContact(p, p.name) { ok ->
+                        if (ok) CallActivity.start(ctx, p.uid, p.name, video)
+                        else ctx.toast("تعذر الحفظ — راجع قواعد Firestore")
+                    }
+                }
+            }
+            .setNegativeButton("إلغاء", null)
             .show()
     }
 
@@ -914,7 +1063,17 @@ class CallsTab(act: MainActivity) : Tab(act) {
                     if (p == null) {
                         ctx.toast("الرقم غير مسجل")
                     } else if (people.none { it.uid == p.uid }) {
-                        ctx.toast("أضف " + p.name + " إلى جهات الاتصال أولاً")
+                        AlertDialog.Builder(ctx)
+                            .setTitle(p.name)
+                            .setMessage("رقم مسجل باسم @" + p.username + "\nليس من جهات اتصالك — أضفه لبدء المكالمة.")
+                            .setPositiveButton("إضافة واتصال") { _, _ ->
+                                Repo.addContact(p, p.name) { ok ->
+                                    if (ok) CallActivity.start(ctx, p.uid, p.name, false)
+                                    else ctx.toast("تعذر الحفظ — راجع القواعد")
+                                }
+                            }
+                            .setNegativeButton("إلغاء", null)
+                            .show()
                     } else {
                         CallActivity.start(ctx, p.uid, p.label, false)
                     }
@@ -930,7 +1089,7 @@ class CallsTab(act: MainActivity) : Tab(act) {
             ctx.toast("لا توجد جهات اتصال")
             return
         }
-        val names = people.map { (if (favs.contains(it.uid)) "⭐ " else "") + it.label }.toTypedArray()
+        val names = people.map { (if (favs.contains(it.uid)) "★ " else "") + it.label }.toTypedArray()
         AlertDialog.Builder(ctx).setTitle("المفضلة — اضغط للتبديل").setItems(names) { _, i ->
             val p = people[i]
             val set = HashSet(favs)

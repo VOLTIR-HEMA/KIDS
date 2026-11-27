@@ -22,6 +22,7 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var urlField: EditText
     private lateinit var updateStatus: TextView
     private lateinit var updateBtn: TextView
+    private lateinit var verifyText: TextView
     private var pending: Update.Info? = null
     private var autoChecked = false
 
@@ -34,6 +35,13 @@ class SettingsActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         if (!autoChecked) autoCheck()
+        Fb.auth.currentUser?.reload()?.addOnCompleteListener {
+            val v = Fb.auth.currentUser?.isEmailVerified == true
+            if (::verifyText.isInitialized) {
+                verifyText.text = if (v) "البريد مؤكد" else "البريد غير مؤكد"
+                verifyText.setTextColor(if (v) Color.parseColor("#008069") else Color.parseColor("#B26A00"))
+            }
+        }
     }
 
     private fun autoCheck() {
@@ -64,7 +72,7 @@ class SettingsActivity : AppCompatActivity() {
             setPadding(0, 0, 0, dp(6))
         }
         body.addView(updateStatus)
-        updateBtn = pillButton(this, "⬇️ تحديث الآن") { doUpdate() }
+        updateBtn = pillButton(this, "تحديث الآن") { doUpdate() }
         updateBtn.visibility = View.GONE
         body.addView(updateBtn, fieldParams())
         urlField = editText(this, "http://192.168.1.5:8765").apply {
@@ -91,20 +99,14 @@ class SettingsActivity : AppCompatActivity() {
             maxLines = 2
         })
         body.addView(
-            label(
+            (label(
                 this,
-                if (u?.isEmailVerified == true) "✔ البريد مؤكد" else "✉️ البريد غير مؤكد — اضغط لإرسال رابط التأكيد",
+                if (u?.isEmailVerified == true) "البريد مؤكد" else "البريد غير مؤكد",
                 12f,
                 if (u?.isEmailVerified == true) Color.parseColor("#008069") else Color.parseColor("#B26A00"),
             ).apply {
                 setPadding(0, 0, 0, dp(8))
-                setOnClickListener {
-                    if (u != null && !u.isEmailVerified) {
-                        try { u.sendEmailVerification() } catch (e: Exception) { /* تجاهل */ }
-                        toast("تم إرسال رابط التأكيد")
-                    }
-                }
-            },
+            }).also { verifyText = it },
         )
         nameField = editText(this, "الاسم").apply { setText(Fb.myName(this@SettingsActivity)) }
         body.addView(nameField, fieldParams())
@@ -113,6 +115,20 @@ class SettingsActivity : AppCompatActivity() {
         }
         body.addView(phoneField, fieldParams())
         body.addView(pillButton(this, "حفظ الحساب") { saveProfile() }, fieldParams(dp(6)))
+        body.addView(pillButton(this, "تسجيل الخروج", false) {
+            confirm(this, "تسجيل الخروج", "سيتم الخروج من الحساب على هذا الجهاز.") {
+                try {
+                    Fb.auth.signOut()
+                } catch (e: Exception) {
+                    /* تجاهل */
+                }
+                startActivity(
+                    Intent(this, AuthActivity::class.java)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK),
+                )
+                finish()
+            }
+        }, fieldParams(dp(6)))
 
         // ---------------- ICE
         body.addView(head("خوادم TURN / STUN"))

@@ -96,9 +96,15 @@ service cloud.firestore {
 
     match /volti_communities/{communityId} {
       allow read: if signedIn();
-      allow create: if signedIn();
+      allow create: if signedIn() && request.resource.data.owner == request.auth.uid;
       allow update: if signedIn();
-      allow delete: if false;
+      allow delete: if signedIn() && resource.data.owner == request.auth.uid;
+
+      match /messages/{mid} {
+        allow read: if signedIn();
+        allow create: if signedIn() && request.resource.data.sender == request.auth.uid;
+        allow update, delete: if false;
+      }
     }
 
     match /{document=**} {
