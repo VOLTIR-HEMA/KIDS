@@ -130,25 +130,8 @@ class CallActivity : AppCompatActivity() {
         setContentView(buildUi())
         isCaller = !incoming
         Repo.isContact(peerUid) { mine ->
-            val allowed = { go: () -> Unit ->
-                ensurePerms()
-                if (incoming) {
-                    if (callId.isBlank()) {
-                        finish()
-                        return@allowed
-                    }
-                    doc = Fb.db.collection(Fb.CALLS).document(callId)
-                    setupPeer()
-                    watchCallDoc()
-                    watchCandidates()
-                    statusText?.text = "مكالمة واردة — جارٍ الرد"
-                } else {
-                    createCall()
-                }
-                startTicker()
-            }
             if (mine) {
-                allowed {}
+                beginCall()
                 return@isContact
             }
             if (!incoming) {
@@ -159,7 +142,7 @@ class CallActivity : AppCompatActivity() {
             // مكالمة واردة: مسموحة إذا كان المتصل أضافني لجهات اتصاله أيضاً
             Repo.theyHaveMe(peerUid) { theirs ->
                 if (theirs) {
-                    allowed {}
+                    beginCall()
                 } else {
                     android.widget.Toast.makeText(this, "متصل غير موجود في جهات اتصالك — تم رفض المكالمة", android.widget.Toast.LENGTH_LONG).show()
                     if (callId.isNotBlank()) {
@@ -169,6 +152,24 @@ class CallActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+
+    private fun beginCall() {
+        ensurePerms()
+        if (incoming) {
+            if (callId.isBlank()) {
+                finish()
+                return
+            }
+            doc = Fb.db.collection(Fb.CALLS).document(callId)
+            setupPeer()
+            watchCallDoc()
+            watchCandidates()
+            statusText?.text = "مكالمة واردة — جارٍ الرد"
+        } else {
+            createCall()
+        }
+        startTicker()
     }
 
     // ------------------------------------------------------------ الواجهة

@@ -158,9 +158,9 @@ class ChatsTab(act: MainActivity) : Tab(act) {
             orientation = LinearLayout.HORIZONTAL
             setPadding(ctx.dp(10), ctx.dp(8), ctx.dp(10), ctx.dp(4))
         }
-        val newChat = actionButton("محادثة جديدة") { newContactDialog(false) }
-        val newCall = actionButton("مكالمة") { newContactDialog(true) }
-        val contactsBtn = actionButton("جهات الاتصال") { act.openContacts() }
+        val newChat = actionButton(ctx, "محادثة جديدة") { newContactDialog(false) }
+        val newCall = actionButton(ctx, "مكالمة") { newContactDialog(true) }
+        val contactsBtn = actionButton(ctx, "جهات الاتصال") { act.openContacts() }
         for (b in listOf(newChat, newCall, contactsBtn)) {
             actions.addView(b, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
                 marginStart = ctx.dp(2)
