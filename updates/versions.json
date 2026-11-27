@@ -1,27 +1,35 @@
 {
   "current": {
-    "code": 4,
-    "name": "1.3",
-    "file": "https://github.com/VOLTIR-HEMA/KIDS/releases/download/v1.3/voltir-call-debug.apk",
-    "size": 52108016,
-    "sha256": "10a872e2683a8f44d3e576d5051d0cb351d322a6e0c9ba320410f387401ccb8a",
-    "notes": "تحسينات المكالمات (طلب أذونات المايك والكاميرا قبل بدء المكالمة) وإصلاح ملء الشاشة، مع تحديث تلقائي عند فتح التطبيق."
+    "code": 5,
+    "name": "1.3.1",
+    "file": "https://github.com/VOLTIR-HEMA/KIDS/releases/download/v1.3.1/voltir-call-debug.apk",
+    "size": 52124396,
+    "sha256": "39a84752d10cb149968aa2b1231dee3c81d8753aae82c5530524e923bb4ea84b",
+    "notes": "إصلاح بدء محرك المكالمات + طلب أذونات المايك والكاميرا قبل المكالمة، إصلاح ملء الشاشة، وتحديث تلقائي عند فتح التطبيق."
   },
   "versions": [
+    {
+      "code": 5,
+      "name": "1.3.1",
+      "file": "https://github.com/VOLTIR-HEMA/KIDS/releases/download/v1.3.1/voltir-call-debug.apk",
+      "size": 52124396,
+      "sha256": "39a84752d10cb149968aa2b1231dee3c81d8753aae82c5530524e923bb4ea84b",
+      "notes": "إصلاح بدء محرك المكالمات + طلب أذونات المايك والكاميرا قبل المكالمة، إصلاح ملء الشاشة، وتحديث تلقائي عند فتح التطبيق."
+    },
     {
       "code": 4,
       "name": "1.3",
       "file": "https://github.com/VOLTIR-HEMA/KIDS/releases/download/v1.3/voltir-call-debug.apk",
       "size": 52108016,
       "sha256": "10a872e2683a8f44d3e576d5051d0cb351d322a6e0c9ba320410f387401ccb8a",
-      "notes": "تحسينات المكالمات (طلب أذونات المايك والكاميرا قبل بدء المكالمة) وإصلاح ملء الشاشة، مع تحديث تلقائي عند فتح التطبيق."
+      "notes": "تحسينات المكالمات وإصلاح ملء الشاشة."
     },
     {
       "code": 3,
       "name": "1.2",
       "file": "",
       "size": 52107988,
-      "notes": "تأكيد البريد الإلكتروني، شاشة جهات الاتصال، المجتمعات، أيقونات نظيفة."
+      "notes": "تأكيد البريد الإلكتروني، جهة الاتصال، المجتمعات، أيقونات نظيفة."
     }
   ]
 }
