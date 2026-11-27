@@ -76,6 +76,7 @@
     <p class="muted" style="line-height:1.9;margin:0">
       التطبيق يقرأ ملف <b>versions.json</b> عند كل فتح. إذا كان رقم الإصدار المنشور أحدث من المثبّت،
       تظهر نافذة «تحديث متاح»، وبعد الضغط يظهر شريط تحميل ثم تُفتح شاشة التثبيت مباشرة بدون حذف التطبيق.
+      ملف APK يُرفع في صفحة الإصدارات (Releases) ويُشار إليه من versions.json.
     </p>
   </div>
 </main>
@@ -123,7 +124,7 @@ function render() {
   $("currentInfo").innerHTML =
     '<span class="badge">v' + (cur.name || "?") + "</span> &nbsp; رقم الإصدار: <b>" + (cur.code || 0) + "</b>" +
     ' &nbsp;·&nbsp; الحجم: ' + sizeText(cur.size) +
-    '<div class="file" style="margin-top:6px">' + (cur.file || "") + "</div>";
+    '<div class="file" style="margin-top:6px">' + fileLabel(cur.file) + "</div>";
 
   const newest = list.reduce((a, b) => (b.code > (a ? a.code : 0) ? b : a), null);
   const banner = $("banner");
@@ -146,12 +147,12 @@ function render() {
         '<div><b>v' + v.name + '</b> <span class="code">(رقم ' + v.code + ")</span> " +
         (isCur ? '<span class="badge">منشور</span>' : "") + "</div>" +
         '<div class="notes">' + (v.notes || "") + "</div>" +
-        '<div class="file" style="margin-top:6px">' + (v.file || "") + " · " + sizeText(v.size) + "</div>" +
+        '<div class="file" style="margin-top:6px">' + fileLabel(v.file) + " · " + sizeText(v.size) + "</div>" +
       "</div>";
     const btn = document.createElement("button");
-    btn.textContent = isCur ? "منشور" : "نشر هذا الإصدار";
-    btn.disabled = isCur;
-    if (!isCur) btn.onclick = () => publish(v);
+    btn.textContent = isCur ? "منشور" : (v.file ? "نشر هذا الإصدار" : "الملف غير متاح");
+    btn.disabled = isCur || !v.file;
+    if (!isCur && v.file) btn.onclick = () => publish(v);
     el.appendChild(btn);
     box.appendChild(el);
   });
@@ -160,6 +161,12 @@ function render() {
 function sizeText(n) {
   if (!n) return "غير معروف";
   return (n / 1048576).toFixed(1) + " ميجا";
+}
+
+function fileLabel(f) {
+  if (!f) return "لا يوجد ملف مرفوع";
+  const n = f.split("/").pop();
+  return f.indexOf("http") === 0 ? n + " (ملف مرفوع في Releases)" : f;
 }
 
 async function publish(v) {
