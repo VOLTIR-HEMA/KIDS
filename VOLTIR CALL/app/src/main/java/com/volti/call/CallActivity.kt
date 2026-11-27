@@ -115,6 +115,7 @@ class CallActivity : AppCompatActivity() {
     private var connectedAt = 0L
     private var deadline = 0L
     private var lastVib = 0L
+    private var pendingStart = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -155,7 +156,12 @@ class CallActivity : AppCompatActivity() {
     }
 
     private fun beginCall() {
-        ensurePerms()
+        if (!hasPerms()) {
+            pendingStart = true
+            ensurePerms()
+            statusText?.text = "بانتظار أذونات المايك والكاميرا…"
+            return
+        }
         if (incoming) {
             if (callId.isBlank()) {
                 finish()
@@ -268,6 +274,26 @@ class CallActivity : AppCompatActivity() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) need.add(Manifest.permission.RECORD_AUDIO)
         if (video && ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) need.add(Manifest.permission.CAMERA)
         if (need.isNotEmpty()) androidx.core.app.ActivityCompat.requestPermissions(this, need.toTypedArray(), 77)
+    }
+
+    private fun hasPerms(): Boolean {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) return false
+        if (video && ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) return false
+        return true
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != 77) return
+        if (hasPerms()) {
+            if (pendingStart) {
+                pendingStart = false
+                beginCall()
+            }
+        } else {
+            toast("لازم السماح بالمايك والكاميرا لإتمام المكالمة")
+            hangup("perms")
+        }
     }
 
     // ------------------------------------------------------------ WebRTC

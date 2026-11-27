@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VOLTIR CALL — مركز التحديثات</title>
+<style>
+  :root { --bg:#0b141a; --card:#111f27; --line:#1f3540; --teal:#00a884; --txt:#e9edef; --dim:#8696a0; --warn:#b26a00; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt); font-family:system-ui,"Segoe UI",Tahoma,sans-serif; }
+  header { padding:22px 18px; background:linear-gradient(135deg,#008069,#00a884); }
+  header h1 { margin:0; font-size:20px; }
+  header p { margin:6px 0 0; font-size:13px; opacity:.85; }
+  main { max-width:900px; margin:0 auto; padding:16px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:16px; margin-bottom:14px; }
+  .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+  .grow { flex:1; }
+  h2 { font-size:16px; margin:0 0 10px; }
+  .muted { color:var(--dim); font-size:12px; }
+  button { border:0; border-radius:10px; padding:10px 16px; font-size:13px; cursor:pointer; background:var(--teal); color:#fff; font-family:inherit; }
+  button.ghost { background:transparent; border:1px solid var(--teal); color:var(--teal); }
+  button.warn { background:var(--warn); }
+  button:disabled { opacity:.45; cursor:default; }
+  .badge { display:inline-block; padding:3px 10px; border-radius:999px; font-size:11px; background:rgba(0,168,132,.15); color:#25d366; }
+  .ver { border-top:1px solid var(--line); padding:12px 0; display:flex; gap:12px; align-items:flex-start; }
+  .ver:first-child { border-top:0; }
+  .ver .code { font-size:12px; color:var(--dim); }
+  .ver .notes { font-size:13px; margin-top:4px; line-height:1.6; white-space:pre-wrap; }
+  .banner { background:rgba(178,106,0,.18); border:1px solid #7a4a00; color:#ffcf80; padding:12px 14px; border-radius:12px; font-size:13px; margin-bottom:14px; display:none; }
+  .modal { position:fixed; inset:0; background:rgba(0,0,0,.65); display:none; align-items:center; justify-content:center; padding:18px; z-index:20; }
+  .modal.show { display:flex; }
+  .sheet { background:#1f2c34; border-radius:16px; width:100%; max-width:400px; padding:18px; }
+  .sheet h3 { margin:0 0 8px; font-size:17px; }
+  .sheet p { font-size:13px; color:#cfd8dc; line-height:1.7; }
+  .bar { height:8px; border-radius:99px; background:#37474f; overflow:hidden; margin-top:14px; }
+  .bar > i { display:block; height:100%; width:0; background:var(--teal); transition:width .2s; }
+  input[type=text], input[type=password] { width:100%; background:#0b141a; border:1px solid var(--line); color:var(--txt); border-radius:10px; padding:10px 12px; font-family:inherit; font-size:13px; }
+  a { color:#53bdeb; }
+  .file { font-size:12px; color:var(--dim); word-break:break-all; }
+  .ok { color:#25d366; } .bad { color:#ff6b6b; }
+</style>
+</head>
+<body>
+<header>
+  <h1>VOLTIR CALL — مركز التحديثات</h1>
+  <p>انشر إصداراً جديداً، وسيظهر للمستخدمين إشعار تحديث داخل التطبيق مع شريط تحميل.</p>
+</header>
+<main>
+  <div class="banner" id="banner"></div>
+
+  <div class="card">
+    <div class="row">
+      <div class="grow">
+        <h2>الإصدار المنشور حالياً</h2>
+        <div id="currentInfo" class="muted">جارٍ التحميل…</div>
+      </div>
+      <button class="ghost" id="refreshBtn">فحص التحديث</button>
+      <button class="ghost" id="previewBtn">معاينة نافذة المستخدم</button>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <input type="password" id="token" placeholder="GitHub Token للنشر (يُحفظ على جهازك فقط)">
+      <button id="saveToken">حفظ</button>
+    </div>
+    <div class="muted" style="margin-top:8px">
+      رابط الملف: <span class="file" id="manifestUrl"></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>الإصدارات</h2>
+    <div id="versions" class="muted">جارٍ التحميل…</div>
+  </div>
+
+  <div class="card">
+    <h2>كيف يعمل التحديث؟</h2>
+    <p class="muted" style="line-height:1.9;margin:0">
+      التطبيق يقرأ ملف <b>versions.json</b> عند كل فتح. إذا كان رقم الإصدار المنشور أحدث من المثبّت،
+      تظهر نافذة «تحديث متاح»، وبعد الضغط يظهر شريط تحميل ثم تُفتح شاشة التثبيت مباشرة بدون حذف التطبيق.
+    </p>
+  </div>
+</main>
+
+<div class="modal" id="modal">
+  <div class="sheet">
+    <h3 id="mTitle">تحديث متاح</h3>
+    <p id="mBody"></p>
+    <div class="bar" id="mBarWrap" style="display:none"><i id="mBar"></i></div>
+    <div class="row" style="justify-content:flex-end;margin-top:16px">
+      <button class="ghost" id="mClose">إغلاق</button>
+      <button id="mGo">تحديث الآن</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const REPO = "VOLTIR-HEMA/KIDS";
+const BRANCH = "main";
+const PATH = "updates/versions.json";
+const PAGE = location.origin + location.pathname.replace(/[^/]*$/, "");
+const MANIFEST = PAGE + "versions.json";
+let data = null;
+
+const $ = (id) => document.getElementById(id);
+
+function loadToken() { return localStorage.getItem("volti_gh_token") || ""; }
+
+async function load(showMsg) {
+  try {
+    const r = await fetch(MANIFEST + "?t=" + Date.now(), { cache: "no-store" });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    data = await r.json();
+    render();
+    if (showMsg) flash("تم فحص الملف بنجاح", true);
+  } catch (e) {
+    $("currentInfo").innerHTML = '<span class="bad">تعذر قراءة versions.json — ' + e.message + "</span>";
+  }
+}
+
+function render() {
+  const cur = data.current || {};
+  const list = data.versions || [];
+  $("manifestUrl").textContent = MANIFEST;
+  $("currentInfo").innerHTML =
+    '<span class="badge">v' + (cur.name || "?") + "</span> &nbsp; رقم الإصدار: <b>" + (cur.code || 0) + "</b>" +
+    ' &nbsp;·&nbsp; الحجم: ' + sizeText(cur.size) +
+    '<div class="file" style="margin-top:6px">' + (cur.file || "") + "</div>";
+
+  const newest = list.reduce((a, b) => (b.code > (a ? a.code : 0) ? b : a), null);
+  const banner = $("banner");
+  if (newest && newest.code > (cur.code || 0)) {
+    banner.style.display = "block";
+    banner.textContent = "يوجد إصدار أحدث غير منشور: v" + newest.name + " (رقم " + newest.code + "). اضغط «نشر» لتنشيطه للمستخدمين.";
+  } else {
+    banner.style.display = "none";
+  }
+
+  const box = $("versions");
+  if (!list.length) { box.textContent = "لا توجد إصدارات مسجلة."; return; }
+  box.innerHTML = "";
+  list.slice().sort((a, b) => b.code - a.code).forEach((v) => {
+    const el = document.createElement("div");
+    el.className = "ver";
+    const isCur = v.code === cur.code;
+    el.innerHTML =
+      '<div class="grow">' +
+        '<div><b>v' + v.name + '</b> <span class="code">(رقم ' + v.code + ")</span> " +
+        (isCur ? '<span class="badge">منشور</span>' : "") + "</div>" +
+        '<div class="notes">' + (v.notes || "") + "</div>" +
+        '<div class="file" style="margin-top:6px">' + (v.file || "") + " · " + sizeText(v.size) + "</div>" +
+      "</div>";
+    const btn = document.createElement("button");
+    btn.textContent = isCur ? "منشور" : "نشر هذا الإصدار";
+    btn.disabled = isCur;
+    if (!isCur) btn.onclick = () => publish(v);
+    el.appendChild(btn);
+    box.appendChild(el);
+  });
+}
+
+function sizeText(n) {
+  if (!n) return "غير معروف";
+  return (n / 1048576).toFixed(1) + " ميجا";
+}
+
+async function publish(v) {
+  const token = loadToken();
+  if (!token) { flash("أدخل GitHub Token أولاً لحفظ النشر", false); $("token").focus(); return; }
+  if (!confirm("نشر v" + v.name + " لكل المستخدمين الآن؟")) return;
+  try {
+    const url = "https://api.github.com/repos/" + REPO + "/contents/" + PATH;
+    const head = await fetch(url + "?ref=" + BRANCH, {
+      headers: { Authorization: "Bearer " + token, Accept: "application/vnd.github+json" },
+    });
+    if (!head.ok) throw new Error("صلاحية الملف: HTTP " + head.status);
+    const meta = await head.json();
+    const next = JSON.parse(atob(meta.content.replace(/\n/g, "")));
+    next.current = v;
+    const body = {
+      message: "release(volti): publish v" + v.name,
+      branch: BRANCH,
+      sha: meta.sha,
+      content: btoa(unescape(encodeURIComponent(JSON.stringify(next, null, 2)))),
+    };
+    const put = await fetch(url, {
+      method: "PUT",
+      headers: { Authorization: "Bearer " + token, Accept: "application/vnd.github+json", "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!put.ok) {
+      const t = await put.text();
+      throw new Error("HTTP " + put.status + " " + t.slice(0, 140));
+    }
+    flash("تم نشر v" + v.name + " — سيظهر للمستخدمين عند فتح التطبيق", true);
+    setTimeout(() => load(false), 2500);
+    showPreview(v);
+  } catch (e) {
+    flash("فشل النشر: " + e.message, false);
+  }
+}
+
+function flash(msg, ok) {
+  const b = $("banner");
+  b.style.display = "block";
+  b.textContent = msg;
+  b.style.color = ok ? "#9ff0d0" : "#ffb3b3";
+  b.style.background = ok ? "rgba(0,168,132,.18)" : "rgba(229,57,53,.18)";
+  b.style.borderColor = ok ? "#0b6b56" : "#7a1f1f";
+}
+
+function showPreview(v) {
+  const cur = data && data.current ? data.current : v || {};
+  $("mTitle").textContent = "تحديث متاح — v" + (cur.name || "?");
+  $("mBody").textContent = (cur.notes || "نسخة جديدة من VOLTIR CALL جاهزة.") +
+    "\nالحجم: " + sizeText(cur.size) + "\n\n(هذه معاينة فقط — التطبيق يعرض نفس النافذة)";
+  $("mBarWrap").style.display = "none";
+  $("mBar").style.width = "0%";
+  $("mGo").disabled = false;
+  $("mGo").textContent = "تحديث الآن";
+  $("modal").classList.add("show");
+}
+
+$("mClose").onclick = () => $("modal").classList.remove("show");
+$("mGo").onclick = () => {
+  $("mBarWrap").style.display = "block";
+  $("mGo").disabled = true;
+  $("mGo").textContent = "جارٍ التنزيل…";
+  let p = 0;
+  const t = setInterval(() => {
+    p = Math.min(100, p + 7);
+    $("mBar").style.width = p + "%";
+    $("mBody").textContent = "جارٍ تنزيل التحديث… " + p + "%";
+    if (p >= 100) {
+      clearInterval(t);
+      $("mBody").textContent = "اكتمل التنزيل — سيُفتح مثبّت Android لإتمام التحديث.";
+      $("mGo").textContent = "تم";
+    }
+  }, 180);
+};
+$("refreshBtn").onclick = () => load(true);
+$("previewBtn").onclick = () => showPreview(null);
+$("saveToken").onclick = () => {
+  const v = $("token").value.trim();
+  if (!v) { localStorage.removeItem("volti_gh_token"); flash("تم حذف الرمز", true); return; }
+  localStorage.setItem("volti_gh_token", v);
+  $("token").value = "";
+  flash("تم حفظ الرمز على هذا الجهاز فقط", true);
+};
+if (loadToken()) $("token").placeholder = "GitHub Token محفوظ — اكتب غيره للتبديل";
+load(false);
+setInterval(() => load(false), 60000);
+</script>
+</body>
+</html>

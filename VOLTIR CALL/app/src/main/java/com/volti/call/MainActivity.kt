@@ -19,6 +19,7 @@ class MainActivity : AppCompatActivity() {
     private var tabs: List<Tab> = emptyList()
     private var index = 0
     private var ready = false
+    private val handler = android.os.Handler(android.os.Looper.getMainLooper())
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -153,6 +154,7 @@ class MainActivity : AppCompatActivity() {
         Repo.setOnline(true)
         try { NotifyService.start(this) } catch (e: Exception) { /* تجاهل */ }
         showTab(0)
+        handler.postDelayed({ try { Update.prompt(this) } catch (e: Exception) { /* تجاهل */ } }, 1500)
     }
 
     private fun showTab(i: Int) {

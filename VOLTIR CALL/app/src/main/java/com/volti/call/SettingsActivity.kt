@@ -75,12 +75,12 @@ class SettingsActivity : AppCompatActivity() {
         updateBtn = pillButton(this, "تحديث الآن") { doUpdate() }
         updateBtn.visibility = View.GONE
         body.addView(updateBtn, fieldParams())
-        urlField = editText(this, "http://192.168.1.5:8765").apply {
+        urlField = editText(this, Update.MANIFEST).apply {
             setText(Fb.prefs(this@SettingsActivity).getString("update_url", "").orEmpty())
             inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_URI
         }
         body.addView(urlField, fieldParams(dp(6)))
-        body.addView(pillButton(this, "حفظ عنوان خادم التحديث", false) {
+        body.addView(pillButton(this, "حفظ رابط التحديث", false) {
             Fb.prefs(this).edit().putString("update_url", urlField.text.toString().trim()).apply()
             toast("تم الحفظ — جارٍ التحقق")
             pending = null
@@ -171,14 +171,9 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun checkUpdate(manual: Boolean) {
-        val base = Fb.prefs(this).getString("update_url", "").orEmpty()
-        if (base.isBlank()) {
-            if (manual) toast("أدخل عنوان خادم التحديث أولاً (يظهر عند تشغيل السكريبت)")
-            return
-        }
         updateStatus.visibility = View.VISIBLE
         updateStatus.text = "جارٍ التحقق من التحديث…"
-        Update.check(this, base) { info ->
+        Update.check(this) { info ->
             pending = info
             if (info == null) {
                 updateStatus.text = "لا يوجد تحديث جديد — النسخة الحالية " + Update.version(this)
@@ -194,17 +189,9 @@ class SettingsActivity : AppCompatActivity() {
 
     private fun doUpdate() {
         val info = pending ?: return
-        updateStatus.text = "جارٍ تنزيل التحديث…"
         updateBtn.visibility = View.GONE
-        Update.download(this, info) { f ->
-            if (f == null) {
-                updateStatus.text = "فشل التنزيل — تحقق من الشبكة والخادم"
-                updateBtn.visibility = View.VISIBLE
-                return@download
-            }
-            updateStatus.text = "اكتمل التنزيل — أكمل التثبيت من النافذة"
-            Update.install(this, f)
-        }
+        updateStatus.text = "جارٍ تنزيل التحديث…"
+        Update.downloadDialog(this, info)
     }
 
     private fun head(t: String): TextView =
